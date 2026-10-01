@@ -1,7 +1,7 @@
 import { app } from 'electron'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 'fs'
-import { AppConfig, Theme, DEFAULT_CONFIG, sanitizeConfig, validateTheme } from '../shared/types'
+import { AppConfig, Theme, DEFAULT_CONFIG, sanitizeConfig, validateTheme, isValidThemeName } from '../shared/types'
 
 export class ConfigManager {
   private configPath: string
@@ -110,16 +110,20 @@ export class ConfigManager {
   }
 
   getTheme(name: string): Theme | null {
+    if (!isValidThemeName(name)) return null
+
     // 1. Try user themes first
-    const userFile = join(this.userThemesDir, `${name}.json`)
-    if (existsSync(userFile)) {
+    const userDirResolved = resolve(this.userThemesDir)
+    const userFile = resolve(this.userThemesDir, `${name}.json`)
+    if (userFile.startsWith(userDirResolved) && existsSync(userFile)) {
       const theme = this.readThemeFile(userFile)
       if (theme) return theme
     }
 
     // 2. Try built-in themes
-    const builtInFile = join(this.builtInThemesDir, `${name}.json`)
-    if (existsSync(builtInFile)) {
+    const builtInDirResolved = resolve(this.builtInThemesDir)
+    const builtInFile = resolve(this.builtInThemesDir, `${name}.json`)
+    if (builtInFile.startsWith(builtInDirResolved) && existsSync(builtInFile)) {
       const theme = this.readThemeFile(builtInFile)
       if (theme) return theme
     }
@@ -131,7 +135,12 @@ export class ConfigManager {
     const validated = validateTheme(theme)
     if (!validated) return false
 
-    const dest = join(this.userThemesDir, `${validated.name}.json`)
+    const userDirResolved = resolve(this.userThemesDir)
+    const dest = resolve(this.userThemesDir, `${validated.name}.json`)
+    if (!dest.startsWith(userDirResolved)) {
+      return false
+    }
+
     try {
       writeFileSync(dest, JSON.stringify(validated, null, 2), 'utf-8')
       return true

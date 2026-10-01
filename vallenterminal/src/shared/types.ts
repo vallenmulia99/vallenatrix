@@ -92,10 +92,16 @@ export const DEFAULT_CONFIG: AppConfig = {
   }
 }
 
+export const THEME_NAME_REGEX = /^[a-z0-9][a-z0-9-_]{0,63}$/
+
+export function isValidThemeName(name: unknown): boolean {
+  return typeof name === 'string' && THEME_NAME_REGEX.test(name)
+}
+
 export function validateTheme(raw: unknown): Theme | null {
   if (!raw || typeof raw !== 'object') return null
   const obj = raw as Record<string, unknown>
-  if (typeof obj.name !== 'string' || !obj.name.trim()) return null
+  if (!isValidThemeName(obj.name)) return null
   if (!obj.colors || typeof obj.colors !== 'object') return null
 
   const colors = obj.colors as Record<string, unknown>

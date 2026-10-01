@@ -44,6 +44,9 @@ function scanDirectory(dir: string, skills: Map<string, Skill>, rootDir: string 
         try {
           const skillData = loadSkillFile(fullPath, rootDir)
           if (skillData) {
+            if (skills.has(skillData.name)) {
+              console.warn(`[Skills] Duplicate skill name '${skillData.name}': ${fullPath} overwrites ${skills.get(skillData.name)?.path}`)
+            }
             skills.set(skillData.name, skillData)
           }
         } catch (err) {
@@ -88,7 +91,7 @@ function loadSkillFile(filePath: string, rootDir: string): Skill | null {
   let category = data.category
   if (!category) {
     const rel = relative(rootDir, dirname(filePath))
-    const parts = rel.split('/').filter(Boolean)
+    const parts = rel.split(require('path').sep).filter(Boolean)
     if (parts.length > 1) {
       category = parts[0]
     } else {

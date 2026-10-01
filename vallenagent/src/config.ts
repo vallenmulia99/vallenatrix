@@ -16,8 +16,7 @@ export const DEFAULT_CONFIG: AgentConfig = {
   max_iterations: 500,
   skills: {
     paths: [
-      join(homedir(), '.vallenatrix', 'skills'),
-      '/home/vallenganteng/Destop/vallenatrix/.vallenatrix/skills'
+      join(homedir(), '.vallenatrix', 'skills')
     ]
   },
   terminal: {
@@ -27,10 +26,6 @@ export const DEFAULT_CONFIG: AgentConfig = {
 
 export function getVallenatrixHome(): string {
   if (process.env.VALLENATRIX_HOME) return process.env.VALLENATRIX_HOME
-  const localProject = join(process.cwd(), '.vallenatrix')
-  if (existsSync(localProject)) return localProject
-  const defaultDir = '/home/vallenganteng/Destop/vallenatrix/.vallenatrix'
-  if (existsSync(defaultDir)) return defaultDir
   return join(homedir(), '.vallenatrix')
 }
 
@@ -49,7 +44,7 @@ export function loadConfig(): AgentConfig {
   const configPath = join(home, 'config.json')
   
   if (!existsSync(configPath)) {
-    return DEFAULT_CONFIG
+    return structuredClone(DEFAULT_CONFIG)
   }
 
   try {

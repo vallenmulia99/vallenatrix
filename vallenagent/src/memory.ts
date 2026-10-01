@@ -75,20 +75,32 @@ export class MemoryStore {
 
   replace(target: 'memory' | 'user', oldText: string, newContent: string): Record<string, any> {
     const entries = this.readEntries(target)
-    const idx = entries.findIndex(e => e.toLowerCase().includes(oldText.toLowerCase()))
-    if (idx === -1) {
+    const matches = entries.filter(e => e.toLowerCase().includes(oldText.toLowerCase()))
+    
+    if (matches.length === 0) {
       return { error: `No entry matching '${oldText}' found in ${target}` }
     }
+    if (matches.length > 1) {
+      return { error: `Found ${matches.length} entries matching '${oldText}'. Use more specific text.` }
+    }
+    
+    const idx = entries.findIndex(e => e.toLowerCase().includes(oldText.toLowerCase()))
     entries[idx] = newContent.trim()
     return this.writeEntries(target, entries)
   }
 
   remove(target: 'memory' | 'user', oldText: string): Record<string, any> {
     const entries = this.readEntries(target)
-    const idx = entries.findIndex(e => e.toLowerCase().includes(oldText.toLowerCase()))
-    if (idx === -1) {
+    const matches = entries.filter(e => e.toLowerCase().includes(oldText.toLowerCase()))
+    
+    if (matches.length === 0) {
       return { error: `No entry matching '${oldText}' found in ${target}` }
     }
+    if (matches.length > 1) {
+      return { error: `Found ${matches.length} entries matching '${oldText}'. Use more specific text.` }
+    }
+    
+    const idx = entries.findIndex(e => e.toLowerCase().includes(oldText.toLowerCase()))
     entries.splice(idx, 1)
     return this.writeEntries(target, entries)
   }

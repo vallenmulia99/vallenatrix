@@ -42,8 +42,10 @@ test('Fuzzy Replace - 9 strategies', async (t) => {
 })
 
 test('Core Tools execution via registry', async (t) => {
-  const skillsDir = '/home/vallenganteng/Destop/vallenatrix/.vallenatrix/skills'
-  const loader = new SkillLoader([skillsDir])
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const testDir = mkdtempSync(join(tmpdir(), 'vallenagent-test-'))
+  const loader = new SkillLoader([testDir])
   loader.load()
   registerBuiltinTools(loader)
 

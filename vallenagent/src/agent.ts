@@ -53,9 +53,15 @@ function pruneOldToolResults(messages: Message[], protectTailCount: number = 8):
   const cutoffIndex = messages.length - protectTailCount
   return messages.map((m, idx) => {
     if (idx < cutoffIndex && m.role === 'tool' && m.content && m.content.length > 250) {
+      try {
+        const parsed = JSON.parse(m.content)
+        if (parsed.error || (typeof parsed.exit_code === 'number' && parsed.exit_code !== 0)) {
+          return m
+        }
+      } catch {}
       return {
         ...m,
-        content: `[Previous output of ${m.name || 'tool'} (${m.content.length} chars) pruned to preserve context window. Action was completed successfully.]`
+        content: `[Output of ${m.name || 'tool'} (${m.content.length} chars) pruned. Re-run tool if needed.]`
       }
     }
     return m
@@ -108,12 +114,13 @@ export class AIAgent {
       async (subGoal: string) => {
         const sub = new AIAgent({
           config: this.config,
-          maxIterations: 100,
+          maxIterations: 30,
           isSubagent: true
         })
         const res = await sub.chat(subGoal)
         return res.response
-      }
+      },
+      this.isSubagent
     )
   }
 
@@ -147,12 +154,16 @@ export class AIAgent {
   }
 
   async chat(userMessage: string, callbacks?: AgentCallbacks, systemPrompt?: string): Promise<AgentResponse> {
-    // Initialize system prompt on first turn
+    this.isInterrupted = false
+
+    // Rebuild system prompt every turn (fresh context)
     if (this.conversationHistory.length === 0) {
-      if (systemPrompt) {
-        this.conversationHistory.push({ role: 'system', content: systemPrompt })
-      } else {
-        this.conversationHistory.push({ role: 'system', content: this.buildSystemPrompt() })
+      const initialSystemPrompt = systemPrompt || this.buildSystemPrompt()
+      this.conversationHistory.push({ role: 'system', content: initialSystemPrompt })
+    } else {
+      this.conversationHistory[0] = {
+        role: 'system',
+        content: systemPrompt || this.buildSystemPrompt()
       }
     }
 
@@ -167,9 +178,11 @@ export class AIAgent {
     let promptTokens = 0
     let completionTokens = 0
     let toolCallCount = 0
+    const startHistoryLen = this.conversationHistory.length
 
     // Agent loop - mirroring Hermes conversation_loop.py
-    while (iterations < this.maxIterations) {
+    try {
+      while (iterations < this.maxIterations) {
       if (this.isInterrupted) {
         this.isInterrupted = false
         const interruptedMsg = '\x1b[33m[Execution halted: Turn interrupted by user /stop]\x1b[0m'
@@ -219,14 +232,35 @@ export class AIAgent {
 
         // Execute tools
         for (const toolCall of assistantMessage.tool_calls) {
+          if (this.isInterrupted) {
+            this.conversationHistory.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              name: toolCall.function.name,
+              content: JSON.stringify({ skipped: 'User interrupted execution' })
+            })
+            continue
+          }
+
           const toolName = toolCall.function.name
           let toolArgs: Record<string, any> = {}
+          let parseError: string | null = null
           try {
             toolArgs = typeof toolCall.function.arguments === 'string'
               ? JSON.parse(toolCall.function.arguments)
               : toolCall.function.arguments || {}
-          } catch {
-            toolArgs = {}
+          } catch (err: any) {
+            parseError = err.message
+          }
+
+          if (parseError) {
+            this.conversationHistory.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              name: toolName,
+              content: JSON.stringify({ error: `Invalid JSON arguments: ${parseError}. Resend with valid JSON.` })
+            })
+            continue
           }
 
           const toolStart = Date.now()
@@ -279,6 +313,31 @@ export class AIAgent {
       }
 
       // No tool calls - agent finished
+      const finalContent = assistantMessage.content || ''
+      
+      // Guard: empty or promise-only response
+      if (!finalContent.trim()) {
+        if (iterations < 3) {
+          this.conversationHistory.push({
+            role: 'user',
+            content: 'Your response was empty. Provide a response or make tool calls.'
+          })
+          continue
+        }
+      }
+      
+      // Guard: promise pattern without tool calls
+      const promisePattern = /^(saya akan|i will|let me|gue bakal|i'll)\s/i
+      if (finalContent.trim().length < 100 && promisePattern.test(finalContent.trim())) {
+        if (iterations < 3) {
+          this.conversationHistory.push({
+            role: 'user',
+            content: 'Act now with tool calls or provide final answer.'
+          })
+          continue
+        }
+      }
+
       const latencySec = (Date.now() - startTime) / 1000
       const tokensPerSec = completionTokens > 0 && latencySec > 0 ? Math.round(completionTokens / latencySec) : 0
       const contextWindow = 1_048_576
@@ -316,8 +375,61 @@ export class AIAgent {
     }
 
     // Max iterations reached
-    throw new Error(`Agent exceeded max iterations (${this.maxIterations})`)
+    try {
+      this.sessionManager.saveSession(
+        this.sessionId,
+        this.conversationHistory,
+        this.config.terminal?.cwd || process.cwd(),
+        this.provider.model
+      )
+    } catch {}
+    
+    return {
+      response: `Max iterations reached (${this.maxIterations}). Work so far saved.`,
+      iterations,
+      totalTokens,
+      toolCalls: toolCallCount,
+      promptTokens,
+      completionTokens
+    }
+  } catch (err: any) {
+    // Rollback incomplete assistant messages or close hanging tool_calls
+    while (this.conversationHistory.length > startHistoryLen) {
+      const last = this.conversationHistory[this.conversationHistory.length - 1]
+      if (last.role === 'assistant' && last.tool_calls) {
+        const toolCalls = last.tool_calls
+        let allClosed = true
+        for (const tc of toolCalls) {
+          const hasResult = this.conversationHistory.some(m => m.role === 'tool' && m.tool_call_id === tc.id)
+          if (!hasResult) {
+            this.conversationHistory.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              name: tc.function.name,
+              content: JSON.stringify({ error: 'Provider error before tool execution' })
+            })
+            allClosed = false
+          }
+        }
+        if (allClosed) break
+      } else {
+        break
+      }
+    }
+    
+    // Save session even after error
+    try {
+      this.sessionManager.saveSession(
+        this.sessionId,
+        this.conversationHistory,
+        this.config.terminal?.cwd || process.cwd(),
+        this.provider.model
+      )
+    } catch {}
+    
+    throw err
   }
+}
 
   private buildSystemPrompt(): string {
     const skillsBlock = this.skillLoader.getFormattedIndex()
@@ -326,6 +438,9 @@ export class AIAgent {
     const cwd = this.config.terminal?.cwd || process.cwd()
     const home = homedir()
     const hostOS = platform()
+    const now = new Date()
+    const dateStr = now.toISOString().split('T')[0]
+    const timeStr = now.toTimeString().split(' ')[0]
 
     const sections: string[] = [
       `You are Vallen AI Agent, an autonomous coding and task-execution agent embedded in Vallenatrix Terminal (Hermes-inspired architecture).
@@ -342,6 +457,7 @@ You MUST use your tools to take action — do not describe what you would do or 
 Pahami bahasa santai/casual Indonesia (bang, lu, gw, gas, gasin, lanjut, yoi, sip, otw, terapkan, beresin). Jangan bertele-tele atau meminta konfirmasi berulang. Jika user memberi perintah atau mengatakan "gas"/"lanjut", langsung eksekusi tool yang tepat (patch, write_file, terminal, dsb) secara tuntas.
 
 # Runtime Environment
+- Current Date: ${dateStr} ${timeStr}
 - Host Platform: ${hostOS}
 - User Home: ${home}
 - Current Working Directory: ${cwd}
@@ -376,11 +492,20 @@ Pahami bahasa santai/casual Indonesia (bang, lu, gw, gas, gasin, lanjut, yoi, si
   }
 
   setModel(modelName: string): void {
+    if (this.provider.model === modelName) return
+    
     const active = this.config.providers.active
     const provider = this.config.providers[active]
     if (provider && typeof provider === 'object') {
       provider.model = modelName
-      this.config = saveConfig(this.config)
+      
+      // Save only provider config, skip runtime terminal.cwd
+      const configToSave: Partial<AgentConfig> = {
+        providers: this.config.providers,
+        skills: this.config.skills,
+        max_iterations: this.config.max_iterations
+      }
+      this.config = saveConfig(configToSave)
       this.provider.model = modelName
     }
   }

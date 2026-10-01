@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, unlinkSync } from 'node:fs'
+import { existsSync, unlinkSync, mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { registry } from '../dist/tools.js'
 import { SkillLoader } from '../dist/skills.js'
 import { MemoryStore } from '../dist/memory.js'
@@ -8,11 +10,11 @@ import { TodoStore } from '../dist/todo.js'
 import { registerBuiltinTools } from '../dist/builtin_tools.js'
 
 test('All Hermes Toolsets Registration & Execution', async (t) => {
-  const skillsDir = '/home/vallenganteng/Destop/vallenatrix/.vallenatrix/skills'
-  const loader = new SkillLoader([skillsDir])
+  const testDir = mkdtempSync(join(tmpdir(), 'vallenagent-test-'))
+  const loader = new SkillLoader([testDir])
   loader.load()
 
-  const memory = new MemoryStore('/tmp/vallenagent_mem_test')
+  const memory = new MemoryStore(join(testDir, 'memories'))
   const todo = new TodoStore()
 
   registerBuiltinTools(loader, memory, todo, async (goal) => `Subagent done: ${goal}`)

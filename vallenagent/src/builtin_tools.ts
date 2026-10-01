@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'fs'
 import { resolve, join, dirname, relative, isAbsolute } from 'path'
-import { exec, execFile } from 'child_process'
+import { exec, execFile, spawn } from 'child_process'
 import { homedir } from 'os'
 import { registry, ToolSchema } from './tools'
 import { SkillLoader } from './skills'
@@ -22,6 +22,34 @@ function normalizeUnicode(text: string): string {
     res = res.replaceAll(k, v)
   }
   return res
+}
+
+function countOccurrences(content: string, searchStr: string): number {
+  if (!searchStr) return 0
+  let count = 0
+  let pos = 0
+  while ((pos = content.indexOf(searchStr, pos)) !== -1) {
+    count++
+    pos += searchStr.length
+  }
+  return count
+}
+
+function applyReplace(content: string, block: string, newString: string, replaceAll: boolean): string {
+  if (replaceAll) {
+    const parts = content.split(block)
+    return parts.join(newString)
+  }
+  const idx = content.indexOf(block)
+  if (idx === -1) return content
+  return content.slice(0, idx) + newString + content.slice(idx + block.length)
+}
+
+function toExitCode(err: any): number {
+  if (err == null) return 0
+  if (typeof err.code === 'number') return err.code
+  if (err.killed || err.signal) return 124
+  return 1
 }
 
 function unescapeString(text: string): string {
@@ -46,9 +74,13 @@ export function fuzzyReplace(
 
   // Strategy 1: Exact match
   if (content.includes(oldString)) {
-    const updated = replaceAll
-      ? content.replaceAll(oldString, newString)
-      : content.replace(oldString, newString)
+    if (!replaceAll) {
+      const count = countOccurrences(content, oldString)
+      if (count > 1) {
+        throw new Error(`Found ${count} exact matches. Add more context to old_string or use replace_all=true`)
+      }
+    }
+    const updated = applyReplace(content, oldString, newString, replaceAll)
     return { content: updated, diff: generateDiff(oldString, newString), strategy: 'exact' }
   }
 
@@ -57,26 +89,40 @@ export function fuzzyReplace(
   const oldLines = oldString.split('\n')
   const oldTrimmed = oldLines.map(l => l.trim()).join('\n')
 
+  const matches2: string[] = []
   for (let i = 0; i <= contentLines.length - oldLines.length; i++) {
     const windowTrimmed = contentLines.slice(i, i + oldLines.length).map(l => l.trim()).join('\n')
     if (windowTrimmed === oldTrimmed) {
-      const matchedBlock = contentLines.slice(i, i + oldLines.length).join('\n')
-      const updated = content.replace(matchedBlock, newString)
-      return { content: updated, diff: generateDiff(matchedBlock, newString), strategy: 'line_trimmed' }
+      matches2.push(contentLines.slice(i, i + oldLines.length).join('\n'))
     }
+  }
+  if (matches2.length > 0) {
+    if (!replaceAll && matches2.length > 1) {
+      throw new Error(`Found ${matches2.length} line-trimmed matches. Add more context to old_string or use replace_all=true`)
+    }
+    const matchedBlock = matches2[0]
+    const updated = applyReplace(content, matchedBlock, newString, replaceAll)
+    return { content: updated, diff: generateDiff(matchedBlock, newString), strategy: 'line_trimmed' }
   }
 
   // Strategy 3: Whitespace normalized
   const collapseWs = (s: string) => s.replace(/[ \t]+/g, ' ')
   const oldWs = collapseWs(oldString)
+  const matches3: string[] = []
   for (let i = 0; i <= contentLines.length - oldLines.length; i++) {
     const windowLines = contentLines.slice(i, i + oldLines.length)
     const windowWs = collapseWs(windowLines.join('\n'))
     if (windowWs === oldWs || windowWs.includes(oldWs)) {
-      const matchedBlock = windowLines.join('\n')
-      const updated = content.replace(matchedBlock, newString)
-      return { content: updated, diff: generateDiff(matchedBlock, newString), strategy: 'whitespace_normalized' }
+      matches3.push(windowLines.join('\n'))
     }
+  }
+  if (matches3.length > 0) {
+    if (!replaceAll && matches3.length > 1) {
+      throw new Error(`Found ${matches3.length} whitespace-normalized matches. Add more context to old_string or use replace_all=true`)
+    }
+    const matchedBlock = matches3[0]
+    const updated = applyReplace(content, matchedBlock, newString, replaceAll)
+    return { content: updated, diff: generateDiff(matchedBlock, newString), strategy: 'whitespace_normalized' }
   }
 
   // Strategy 4: Indentation flexible
@@ -85,19 +131,32 @@ export function fuzzyReplace(
     return lines.map(l => l.slice(minIndent)).join('\n')
   }
   const oldDedented = stripIndent(oldLines)
+  const matches4: string[] = []
   for (let i = 0; i <= contentLines.length - oldLines.length; i++) {
     const windowLines = contentLines.slice(i, i + oldLines.length)
     if (stripIndent(windowLines) === oldDedented) {
-      const matchedBlock = windowLines.join('\n')
-      const updated = content.replace(matchedBlock, newString)
-      return { content: updated, diff: generateDiff(matchedBlock, newString), strategy: 'indentation_flexible' }
+      matches4.push(windowLines.join('\n'))
     }
+  }
+  if (matches4.length > 0) {
+    if (!replaceAll && matches4.length > 1) {
+      throw new Error(`Found ${matches4.length} indentation-flexible matches. Add more context to old_string or use replace_all=true`)
+    }
+    const matchedBlock = matches4[0]
+    const updated = applyReplace(content, matchedBlock, newString, replaceAll)
+    return { content: updated, diff: generateDiff(matchedBlock, newString), strategy: 'indentation_flexible' }
   }
 
   // Strategy 5: Escape normalized
   const oldUnescaped = unescapeString(oldString)
   if (content.includes(oldUnescaped)) {
-    const updated = content.replace(oldUnescaped, newString)
+    if (!replaceAll) {
+      const count = countOccurrences(content, oldUnescaped)
+      if (count > 1) {
+        throw new Error(`Found ${count} escape-normalized matches. Add more context to old_string or use replace_all=true`)
+      }
+    }
+    const updated = applyReplace(content, oldUnescaped, newString, replaceAll)
     return { content: updated, diff: generateDiff(oldUnescaped, newString), strategy: 'escape_normalized' }
   }
 
@@ -108,6 +167,7 @@ export function fuzzyReplace(
       ...oldLines.slice(1, -1),
       oldLines[oldLines.length - 1].trim()
     ].join('\n')
+    const matches6: string[] = []
     for (let i = 0; i <= contentLines.length - oldLines.length; i++) {
       const windowLines = contentLines.slice(i, i + oldLines.length)
       const windowTrimmed = [
@@ -116,10 +176,16 @@ export function fuzzyReplace(
         windowLines[windowLines.length - 1].trim()
       ].join('\n')
       if (windowTrimmed === boundaryTrimmedOld) {
-        const matchedBlock = windowLines.join('\n')
-        const updated = content.replace(matchedBlock, newString)
-        return { content: updated, diff: generateDiff(matchedBlock, newString), strategy: 'trimmed_boundary' }
+        matches6.push(windowLines.join('\n'))
       }
+    }
+    if (matches6.length > 0) {
+      if (!replaceAll && matches6.length > 1) {
+        throw new Error(`Found ${matches6.length} trimmed-boundary matches. Add more context to old_string or use replace_all=true`)
+      }
+      const matchedBlock = matches6[0]
+      const updated = applyReplace(content, matchedBlock, newString, replaceAll)
+      return { content: updated, diff: generateDiff(matchedBlock, newString), strategy: 'trimmed_boundary' }
     }
   }
 
@@ -127,6 +193,12 @@ export function fuzzyReplace(
   const normOldUnicode = normalizeUnicode(oldString)
   const normContentUnicode = normalizeUnicode(content)
   if (normContentUnicode.includes(normOldUnicode)) {
+    if (!replaceAll) {
+      const count = countOccurrences(normContentUnicode, normOldUnicode)
+      if (count > 1) {
+        throw new Error(`Found ${count} unicode-normalized matches. Add more context to old_string or use replace_all=true`)
+      }
+    }
     const idx = normContentUnicode.indexOf(normOldUnicode)
     const matchedBlock = content.slice(idx, idx + oldString.length)
     const updated = content.slice(0, idx) + newString + content.slice(idx + matchedBlock.length)
@@ -137,18 +209,24 @@ export function fuzzyReplace(
   if (oldLines.length >= 3) {
     const firstLine = oldLines[0].trim()
     const lastLine = oldLines[oldLines.length - 1].trim()
+    const matches8: string[] = []
     for (let i = 0; i <= contentLines.length - oldLines.length; i++) {
       if (contentLines[i].trim() === firstLine && contentLines[i + oldLines.length - 1].trim() === lastLine) {
-        const matchedBlock = contentLines.slice(i, i + oldLines.length).join('\n')
-        const updated = content.replace(matchedBlock, newString)
-        return { content: updated, diff: generateDiff(matchedBlock, newString), strategy: 'block_anchor' }
+        matches8.push(contentLines.slice(i, i + oldLines.length).join('\n'))
       }
+    }
+    if (matches8.length > 0) {
+      if (!replaceAll && matches8.length > 1) {
+        throw new Error(`Found ${matches8.length} block-anchor matches. Add more context to old_string or use replace_all=true`)
+      }
+      const matchedBlock = matches8[0]
+      const updated = applyReplace(content, matchedBlock, newString, replaceAll)
+      return { content: updated, diff: generateDiff(matchedBlock, newString), strategy: 'block_anchor' }
     }
   }
 
   // Strategy 9: Context-aware similarity match
-  let bestIdx = -1
-  let bestScore = 0
+  let bestMatches: Array<{idx: number, score: number, block: string}> = []
   for (let i = 0; i <= contentLines.length - oldLines.length; i++) {
     let matchedLines = 0
     for (let j = 0; j < oldLines.length; j++) {
@@ -157,16 +235,27 @@ export function fuzzyReplace(
       }
     }
     const score = matchedLines / oldLines.length
-    if (score > bestScore && score >= 0.7) {
-      bestScore = score
-      bestIdx = i
+    if (score >= 0.9) {
+      bestMatches.push({
+        idx: i,
+        score,
+        block: contentLines.slice(i, i + oldLines.length).join('\n')
+      })
     }
   }
 
-  if (bestIdx !== -1) {
-    const matchedBlock = contentLines.slice(bestIdx, bestIdx + oldLines.length).join('\n')
-    const updated = content.replace(matchedBlock, newString)
-    return { content: updated, diff: generateDiff(matchedBlock, newString), strategy: 'similarity_match' }
+  if (bestMatches.length > 0) {
+    if (!replaceAll && bestMatches.length > 1) {
+      throw new Error(`Found ${bestMatches.length} similarity matches (≥90%). Add more context to old_string or use replace_all=true`)
+    }
+    const matchedBlock = bestMatches[0].block
+    const updated = applyReplace(content, matchedBlock, newString, replaceAll)
+    const warning = `Fuzzy match with ${Math.round(bestMatches[0].score * 100)}% similarity`
+    return { 
+      content: updated, 
+      diff: generateDiff(matchedBlock, newString) + `\n\n[WARNING: ${warning}]`, 
+      strategy: 'similarity_match' 
+    }
   }
 
   throw new Error(`Failed to find unique match for replacement after trying 9 matching strategies. Verify old_string exists in file.`)
@@ -213,14 +302,20 @@ function truncateOutput(text: string, maxBytes: number = 50_000): { text: string
   }
 }
 
+let builtinToolsRegistered = false
+
 // --- Tools Implementation ---
 
 export function registerBuiltinTools(
   skillLoader: SkillLoader,
   memoryStore?: MemoryStore,
   todoStore?: TodoStore,
-  delegateAgentFactory?: (goal: string) => Promise<string>
+  delegateAgentFactory?: (goal: string) => Promise<string>,
+  isSubagent: boolean = false
 ): void {
+  if (builtinToolsRegistered) return
+  builtinToolsRegistered = true
+
   const memory = memoryStore || new MemoryStore()
   const todo = todoStore || new TodoStore()
 
@@ -264,6 +359,7 @@ export function registerBuiltinTools(
         const startIdx = offset - 1
         const sliceLines = allLines.slice(startIdx, startIdx + limit)
         const maxChars = 100_000
+        const maxLineChars = 50_000
 
         let charCount = 0
         let truncated = false
@@ -271,13 +367,24 @@ export function registerBuiltinTools(
 
         for (let i = 0; i < sliceLines.length; i++) {
           const lineNum = offset + i
-          const formattedLine = `${lineNum}|${sliceLines[i]}`
+          let lineContent = sliceLines[i]
+          let lineTruncated = false
+          
+          if (lineContent.length > maxLineChars) {
+            lineContent = lineContent.slice(0, maxLineChars) + '... [line truncated]'
+            lineTruncated = true
+          }
+          
+          const formattedLine = `${lineNum}|${lineContent}`
           if (charCount + formattedLine.length + 1 > maxChars) {
             truncated = true
             break
           }
           keptLines.push(formattedLine)
           charCount += formattedLine.length + 1
+          if (lineTruncated) {
+            truncated = true
+          }
         }
 
         const result: Record<string, any> = {
@@ -289,8 +396,9 @@ export function registerBuiltinTools(
 
         if (truncated) {
           result.truncated = true
-          result.next_offset = offset + keptLines.length
-          result.hint = `Output truncated at 100K char limit after ${keptLines.length} lines. Use offset=${result.next_offset} to continue.`
+          const nextOff = offset + Math.max(1, keptLines.length)
+          result.next_offset = nextOff
+          result.hint = `Output truncated at 100K char limit after ${keptLines.length} lines. Use offset=${nextOff} to continue.`
         }
 
         return JSON.stringify(result)
@@ -442,7 +550,9 @@ export function registerBuiltinTools(
           try {
             const entries = readdirSync(dir, { withFileTypes: true })
             for (const entry of entries) {
-              if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist') continue
+              const skipDirs = ['.git', 'node_modules', 'dist', 'build', '.next']
+              if (entry.isDirectory() && skipDirs.includes(entry.name)) continue
+              
               const subPath = join(dir, entry.name)
               if (entry.isDirectory()) {
                 walk(subPath)
@@ -477,7 +587,9 @@ export function registerBuiltinTools(
         try {
           const entries = readdirSync(dir, { withFileTypes: true })
           for (const entry of entries) {
-            if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'dist') continue
+            const skipDirs = ['.git', 'node_modules', 'dist', 'build', '.next']
+            if (entry.isDirectory() && skipDirs.includes(entry.name)) continue
+            
             const subPath = join(dir, entry.name)
             if (entry.isDirectory()) {
               searchDirContents(subPath)
@@ -561,7 +673,29 @@ export function registerBuiltinTools(
       const probeCommand = `${rawCommand}\n__RET=$?; echo "\n__VALLEN_CWD__=$(pwd)"; exit $__RET`
 
       return new Promise<string>((resolveResult) => {
-        exec(probeCommand, { cwd: workdir, timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+        const proc = spawn('/bin/sh', ['-c', probeCommand], {
+          cwd: workdir,
+          detached: true,
+          stdio: ['ignore', 'pipe', 'pipe']
+        })
+
+        let stdout = ''
+        let stderr = ''
+        let killed = false
+
+        proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
+        proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+
+        const timeoutHandle = setTimeout(() => {
+          killed = true
+          try {
+            if (proc.pid) process.kill(-proc.pid, 'SIGKILL')
+          } catch {}
+        }, timeout)
+
+        proc.on('close', (code: number | null, signal: string | null) => {
+          clearTimeout(timeoutHandle)
+          
           let output = stdout || ''
           const cwdMarker = '\n__VALLEN_CWD__='
           const markerIdx = output.lastIndexOf(cwdMarker)
@@ -573,15 +707,22 @@ export function registerBuiltinTools(
             }
           }
 
-          const exitCode = err?.code ?? 0
+          const exitCode = killed ? 124 : (code ?? 1)
           const rawOutput = (output + (stderr ? `\n[STDERR]\n${stderr}` : '')).trim()
           const { text: truncatedOut } = truncateOutput(rawOutput, 50_000)
-          resolveResult(JSON.stringify({
+          const result: any = {
             exit_code: exitCode,
             output: truncatedOut,
-            cwd: context.workingDir,
-            error: err ? err.message : null
-          }))
+            cwd: context.workingDir
+          }
+          if (killed || signal) {
+            result.timed_out = true
+            result.signal = signal || 'SIGKILL'
+          }
+          if (exitCode !== 0 && (code !== null || killed)) {
+            result.error = killed ? 'Command timed out' : `Process exited with code ${code}`
+          }
+          resolveResult(JSON.stringify(result))
         })
       })
     }
@@ -614,12 +755,20 @@ export function registerBuiltinTools(
         execFile('python3', ['-c', code], { cwd: workdir, timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
           const rawOutput = (stdout + (stderr ? `\n[STDERR]\n${stderr}` : '')).trim()
           const { text: output, truncated } = truncateOutput(rawOutput, 50_000)
-          resolveResult(JSON.stringify({
-            exit_code: err?.code ?? 0,
+          const exitCode = toExitCode(err)
+          const result: any = {
+            exit_code: exitCode,
             stdout: output,
-            truncated,
-            error: err ? err.message : null
-          }))
+            truncated
+          }
+          if (err?.killed || err?.signal) {
+            result.timed_out = true
+            result.signal = err.signal || 'SIGTERM'
+          }
+          if (err && exitCode !== 0) {
+            result.error = err.message
+          }
+          resolveResult(JSON.stringify(result))
         })
       })
     }
@@ -1031,57 +1180,59 @@ export function registerBuiltinTools(
     }
   })
 
-  // 15. delegate_task
-  const delegateTaskSchema: ToolSchema = {
-    name: 'delegate_task',
-    description: 'Spawn subagent in isolated context to complete focused subtasks. Returns summary.',
-    parameters: {
-      type: 'object',
-      properties: {
-        tasks: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              goal: { type: 'string', description: 'Goal for subagent' },
-              context: { type: 'string', description: 'Background context for subagent' }
+  // 15. delegate_task (skip for subagents)
+  if (!isSubagent) {
+    const delegateTaskSchema: ToolSchema = {
+      name: 'delegate_task',
+      description: 'Spawn subagent in isolated context to complete focused subtasks. Returns summary.',
+      parameters: {
+        type: 'object',
+        properties: {
+          tasks: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                goal: { type: 'string', description: 'Goal for subagent' },
+                context: { type: 'string', description: 'Background context for subagent' }
+              },
+              required: ['goal']
             },
-            required: ['goal']
-          },
-          description: 'Subagent tasks to execute'
-        }
-      },
-      required: ['tasks']
-    }
-  }
-
-  registry.register({
-    name: 'delegate_task',
-    schema: delegateTaskSchema,
-    toolset: 'delegation',
-    handler: async (args) => {
-      const tasks = Array.isArray(args.tasks) ? args.tasks : []
-      const summaries: Array<{ goal: string; summary: string }> = []
-
-      for (const t of tasks) {
-        if (delegateAgentFactory) {
-          try {
-            const summary = await delegateAgentFactory(t.goal + (t.context ? `\nContext: ${t.context}` : ''))
-            summaries.push({ goal: t.goal, summary })
-          } catch (err: any) {
-            summaries.push({ goal: t.goal, summary: `Subagent failed: ${err.message}` })
+            description: 'Subagent tasks to execute'
           }
-        } else {
-          summaries.push({
-            goal: t.goal,
-            summary: `Subagent delegated task completed with goal: ${t.goal}`
-          })
-        }
+        },
+        required: ['tasks']
       }
-
-      return JSON.stringify({ results: summaries })
     }
-  })
+
+    registry.register({
+      name: 'delegate_task',
+      schema: delegateTaskSchema,
+      toolset: 'delegation',
+      handler: async (args) => {
+        const tasks = Array.isArray(args.tasks) ? args.tasks : []
+        const summaries: Array<{ goal: string; summary: string }> = []
+
+        for (const t of tasks) {
+          if (delegateAgentFactory) {
+            try {
+              const summary = await delegateAgentFactory(t.goal + (t.context ? `\nContext: ${t.context}` : ''))
+              summaries.push({ goal: t.goal, summary })
+            } catch (err: any) {
+              summaries.push({ goal: t.goal, summary: `Subagent failed: ${err.message}` })
+            }
+          } else {
+            summaries.push({
+              goal: t.goal,
+              summary: `Subagent delegated task completed with goal: ${t.goal}`
+            })
+          }
+        }
+
+        return JSON.stringify({ results: summaries })
+      }
+    })
+  }
 
   // 16. skill_manage
   const skillManageSchema: ToolSchema = {
@@ -1121,9 +1272,28 @@ export function registerBuiltinTools(
       mkdirSync(skillsDir, { recursive: true })
 
       for (const op of ops) {
-        const skillName = String(op.name).trim()
+        const skillName = String(op.name || '').trim()
         const cat = String(op.category || 'general').trim()
-        const catDir = join(skillsDir, cat, skillName)
+        
+        // Validate name and category
+        const nameRegex = /^[a-z0-9][a-z0-9._-]*$/i
+        if (!skillName || !nameRegex.test(skillName)) {
+          results.push({ name: skillName, error: 'Invalid skill name: must match /^[a-z0-9][a-z0-9._-]*$/i' })
+          continue
+        }
+        if (!nameRegex.test(cat)) {
+          results.push({ name: skillName, error: 'Invalid category: must match /^[a-z0-9][a-z0-9._-]*$/i' })
+          continue
+        }
+        
+        const catDir = resolve(skillsDir, cat, skillName)
+        
+        // Ensure paths stay within skillsDir
+        if (!catDir.startsWith(skillsDir + require('path').sep)) {
+          results.push({ name: skillName, error: 'Invalid path: must be within skills directory' })
+          continue
+        }
+        
         const skillFile = join(catDir, 'SKILL.md')
 
         if (op.action === 'create') {
@@ -1139,6 +1309,17 @@ export function registerBuiltinTools(
           const patched = fuzzyReplace(existing, String(op.old_string), String(op.new_string))
           writeFileSync(skillFile, patched.content, 'utf-8')
           results.push({ name: skillName, action: 'patched', strategy: patched.strategy })
+        } else if (op.action === 'delete') {
+          if (!existsSync(skillFile)) {
+            results.push({ name: skillName, error: `Skill file does not exist: ${skillFile}` })
+            continue
+          }
+          const { unlinkSync, rmdirSync } = await import('fs')
+          unlinkSync(skillFile)
+          try {
+            rmdirSync(catDir)
+          } catch {}
+          results.push({ name: skillName, action: 'deleted' })
         }
       }
 
@@ -1174,7 +1355,15 @@ export function registerBuiltinTools(
       }
 
       if (args.file_path) {
-        const linkedPath = join(dirname(skill.path), String(args.file_path))
+        const filePath = String(args.file_path)
+        const skillDir = dirname(skill.path)
+        const linkedPath = resolve(skillDir, filePath)
+        
+        // Prevent path traversal
+        if (!linkedPath.startsWith(skillDir + require('path').sep)) {
+          return JSON.stringify({ error: `Invalid file path: must be within skill directory` })
+        }
+        
         if (!existsSync(linkedPath)) {
           return JSON.stringify({ error: `Linked file not found: ${args.file_path}` })
         }

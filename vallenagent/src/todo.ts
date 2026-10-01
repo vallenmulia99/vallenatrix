@@ -14,14 +14,24 @@ export class TodoStore {
 
   write(todos: Array<Partial<TodoItem> & { id: string }>, merge: boolean = false): TodoItem[] {
     if (!merge) {
-      this.items = todos.map(t => ({
-        id: String(t.id).trim(),
-        content: String(t.content || '').trim(),
-        status: (['pending', 'in_progress', 'completed', 'cancelled'].includes(t.status || '') ? t.status : 'pending') as TodoItem['status']
-      }))
+      const ids = new Set<string>()
+      this.items = todos.map(t => {
+        const id = String(t.id || '').trim()
+        if (!id) throw new Error('Todo id cannot be empty')
+        if (ids.has(id)) throw new Error(`Duplicate todo id: ${id}`)
+        ids.add(id)
+        
+        return {
+          id,
+          content: String(t.content || '').trim(),
+          status: (['pending', 'in_progress', 'completed', 'cancelled'].includes(t.status || '') ? t.status : 'pending') as TodoItem['status']
+        }
+      })
     } else {
       for (const t of todos) {
-        const id = String(t.id).trim()
+        const id = String(t.id || '').trim()
+        if (!id) throw new Error('Todo id cannot be empty')
+        
         const existing = this.items.find(i => i.id === id)
         if (existing) {
           if (t.content) existing.content = String(t.content).trim()

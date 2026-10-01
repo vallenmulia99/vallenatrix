@@ -234,9 +234,24 @@ window.addEventListener('keydown', async (e) => {
     e.preventDefault()
     const text = await navigator.clipboard.readText()
     if (text) {
-      window.api.sendTerminalData(text)
+      term.paste(text)
     }
     return
+  }
+})
+
+// Middle-click to paste into terminal
+terminalContainer.addEventListener('auxclick', async (e) => {
+  if (e.button === 1) {
+    e.preventDefault()
+    try {
+      const text = await navigator.clipboard.readText()
+      if (text) {
+        term.paste(text)
+      }
+    } catch {
+      // Clipboard read failed
+    }
   }
 })
 

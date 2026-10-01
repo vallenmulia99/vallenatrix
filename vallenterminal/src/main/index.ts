@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol } from 'electron'
+import { app, BrowserWindow, ipcMain, protocol, shell } from 'electron'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { IPC_CHANNELS } from '../shared/channels'
@@ -50,6 +50,34 @@ function createWindow(): void {
   })
 
   mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+
+  // Security: deny child windows and route valid external URLs to default browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        shell.openExternal(url)
+      }
+    } catch {
+      // Invalid URL
+    }
+    return { action: 'deny' }
+  })
+
+  // Prevent non-local navigation
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith('file://')) {
+      event.preventDefault()
+      try {
+        const parsed = new URL(url)
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+          shell.openExternal(url)
+        }
+      } catch {
+        // Invalid URL
+      }
+    }
+  })
 
   // Window state events for auto-pausing video and UI adjustments
   mainWindow.on('focus', () => {
@@ -144,6 +172,20 @@ function setupIpc(): void {
 
   ipcMain.handle(IPC_CHANNELS.THEME_SAVE, (_event, theme) => {
     return configManager.saveUserTheme(theme)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.SYSTEM_OPEN_EXTERNAL, async (_event, url: string) => {
+    if (typeof url !== 'string') return false
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        await shell.openExternal(url)
+        return true
+      }
+    } catch {
+      // Invalid URL
+    }
+    return false
   })
 }
 

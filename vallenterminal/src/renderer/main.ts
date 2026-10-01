@@ -77,7 +77,9 @@ const term = new Terminal({
 })
 
 const fitAddon = new FitAddon()
-const webLinksAddon = new WebLinksAddon()
+const webLinksAddon = new WebLinksAddon((_event, uri) => {
+  window.api.openExternal(uri)
+})
 term.loadAddon(fitAddon)
 term.loadAddon(webLinksAddon)
 

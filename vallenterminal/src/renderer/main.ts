@@ -176,7 +176,7 @@ function applyBackground(): void {
 function applyTheme(theme: Theme): void {
   term.options.theme = {
     background: 'rgba(0, 0, 0, 0)',
-    foreground: '#ffffff',
+    foreground: theme.colors.foreground || '#ffffff',
     cursor: theme.colors.cursor || '#ffffff',
     cursorAccent: theme.colors.cursorAccent || '#000000',
     selectionBackground: theme.colors.selectionBackground || 'rgba(255, 255, 255, 0.2)',
@@ -187,7 +187,7 @@ function applyTheme(theme: Theme): void {
     blue: theme.colors.blue,
     magenta: theme.colors.magenta,
     cyan: theme.colors.cyan,
-    white: '#ffffff',
+    white: theme.colors.white || '#ffffff',
     brightBlack: theme.colors.brightBlack,
     brightRed: theme.colors.brightRed,
     brightGreen: theme.colors.brightGreen,
@@ -195,7 +195,7 @@ function applyTheme(theme: Theme): void {
     brightBlue: theme.colors.brightBlue,
     brightMagenta: theme.colors.brightMagenta,
     brightCyan: theme.colors.brightCyan,
-    brightWhite: '#ffffff'
+    brightWhite: theme.colors.brightWhite || '#ffffff'
   }
 }
 

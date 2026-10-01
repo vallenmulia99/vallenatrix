@@ -18,6 +18,8 @@ vallenterminal/.vite/
 *.local
 *.env
 *.token
+.vallenatrix/
+refrensi*/
 update.bat
 update.sh
 

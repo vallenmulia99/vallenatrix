@@ -17,7 +17,10 @@ export const IPC_CHANNELS = {
   THEME_SAVE: 'theme:save',
 
   MEDIA_SELECT: 'media:select',
-  SYSTEM_OPEN_EXTERNAL: 'system:open-external'
+  SYSTEM_OPEN_EXTERNAL: 'system:open-external',
+
+  AGENT_CHAT: 'agent:chat',
+  AGENT_STATUS: 'agent:status'
 } as const
 
 export type IpcChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]

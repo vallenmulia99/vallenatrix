@@ -188,6 +188,272 @@ function setupIpc(): void {
     }
     return false
   })
+
+  let agentInstance: any = null
+  function getAgentInstance() {
+    if (!agentInstance) {
+      const vallenagentDist = join(__dirname, '../../../vallenagent/dist/index.js')
+      const { AIAgent } = require(vallenagentDist)
+      agentInstance = new AIAgent()
+    }
+    return agentInstance
+  }
+
+  ipcMain.handle(IPC_CHANNELS.AGENT_CHAT, async (_event, { message, model: userModel }: { message: string; model?: string }) => {
+    try {
+      const trimmed = message.trim()
+      const agent = getAgentInstance()
+
+      // Handle Slash Commands
+      if (trimmed.startsWith('/token')) {
+        const parts = trimmed.split(/\s+/)
+        if (parts.length < 2) {
+          const cfg = agent.getConfig()
+          const p = cfg.providers['9router']
+          const hasToken = p && p.api_key && p.api_key.length > 0
+          return {
+            response: `\x1b[36m[9router Token Config]\x1b[0m\nUsage: /token <your-api-key>\nCurrent status: ${hasToken ? '\x1b[32mConnected (key set)\x1b[0m' : '\x1b[31mNo token set\x1b[0m'}\nEndpoint: http://localhost:20128/v1\nModel: ${p?.model || 'ag/gemini-3.8-flash-medium'}`
+          }
+        }
+        const newToken = parts[1].trim()
+        agent.setToken(newToken, '9router')
+        return {
+          response: `\x1b[32m✔ 9router API token connected and saved!\x1b[0m\nEndpoint: http://localhost:20128/v1\nModel: ${agent.getConfig().providers['9router']?.model || 'ag/gemini-3.8-flash-medium'}`
+        }
+      }
+
+      if (trimmed.startsWith('/model')) {
+        const parts = trimmed.split(/\s+/)
+        if (parts.length < 2) {
+          const cfg = agent.getConfig()
+          const p = cfg.providers['9router'] || {}
+          const activeModel = agent.provider.model || p.model || 'ag/gemini-3.8-flash-medium'
+          const hasToken = p.api_key && p.api_key.length > 0
+          return {
+            response: `\x1b[36m[9router Model Config]\x1b[0m\nActive Model   : \x1b[32m${activeModel}\x1b[0m\nProvider       : 9router (http://localhost:20128/v1)\nToken Status   : ${hasToken ? '\x1b[32mConnected (Bearer key aktif)\x1b[0m' : '\x1b[31mNo token set (/token <key>)\x1b[0m'}\n\n\x1b[33mUsage:\x1b[0m\n  /model <model-name>\n\n\x1b[33mContoh:\x1b[0m\n  /model vallen/contoh\n  /model ag/gemini-3.8-flash-medium\n  /model kr/claude-sonnet-4.5-thinking-agentic\n  /model cl/openai/gpt-6.1-sol-pro\n  /model kr/deepseek-3.2-thinking-agentic\n  /model cl/qwen/qwen3.8-max-prime`
+          }
+        }
+        const newModel = parts.slice(1).join(' ').trim()
+        agent.setModel(newModel)
+        return {
+          response: `\x1b[32m✔ Model updated to: ${newModel}\x1b[0m\nEndpoint: http://localhost:20128/v1 (via 9router Bearer token)`,
+          updatedModel: newModel
+        }
+      }
+
+      if (trimmed === '/skills') {
+        const skills = agent.skillLoader.list()
+        const byCat: Record<string, string[]> = {}
+        for (const s of skills) {
+          const cat = s.metadata.category || 'general'
+          if (!byCat[cat]) byCat[cat] = []
+          byCat[cat].push(s.name)
+        }
+        const lines = ['\x1b[36m[Available Skills]\x1b[0m']
+        for (const [cat, sks] of Object.entries(byCat)) {
+          lines.push(`\x1b[33m${cat}\x1b[0m: ${sks.join(', ')}`)
+        }
+        return { response: lines.join('\n') }
+      }
+
+      if (trimmed === '/tools') {
+        const vallenagentDist = join(__dirname, '../../../vallenagent/dist/index.js')
+        const { registry } = require(vallenagentDist)
+        const toolList = registry.list()
+        const byToolset: Record<string, string[]> = {}
+        for (const t of toolList) {
+          const ts = t.toolset || 'other'
+          if (!byToolset[ts]) byToolset[ts] = []
+          byToolset[ts].push(t.name)
+        }
+        const lines = ['\x1b[36m[Available Toolsets & Tools]\x1b[0m']
+        for (const [ts, tools] of Object.entries(byToolset).sort(([a], [b]) => a.localeCompare(b))) {
+          lines.push(`\x1b[33m${ts.padEnd(16)}\x1b[0m: ${tools.join(', ')}`)
+        }
+        return { response: lines.join('\n') }
+      }
+
+      if (trimmed === '/memory') {
+        const mem = agent.memoryStore.formatForSystemPrompt()
+        return {
+          response: mem || '\x1b[33mNo persistent memories stored yet.\x1b[0m'
+        }
+      }
+
+      if (trimmed === '/todos') {
+        const td = agent.todoStore.formatForInjection()
+        return {
+          response: td || '\x1b[33mNo active todos in task list.\x1b[0m'
+        }
+      }
+
+      if (trimmed === '/stop') {
+        agent.interrupt()
+        return {
+          response: `\x1b[33m✔ Interrupt signal sent. Halting active agent execution.\x1b[0m`
+        }
+      }
+
+      if (trimmed === '/sessions') {
+        const sessions = agent.sessionManager.listSessions()
+        if (sessions.length === 0) {
+          return { response: '\x1b[33mNo saved sessions found in ~/.vallenatrix/sessions/\x1b[0m' }
+        }
+        const lines = ['\x1b[36m[Saved Chat Sessions]\x1b[0m']
+        for (const s of sessions.slice(0, 10)) {
+          const dateStr = s.updated_at ? s.updated_at.replace('T', ' ').slice(0, 16) : ''
+          lines.push(`• \x1b[32m${s.id}\x1b[0m \x1b[37m"${s.title}"\x1b[0m \x1b[2m(${dateStr} | ${s.model})\x1b[0m`)
+        }
+        lines.push(`\n\x1b[33mUsage:\x1b[0m /resume <session-id>`)
+        return { response: lines.join('\n') }
+      }
+
+      if (trimmed.startsWith('/resume')) {
+        const parts = trimmed.split(/\s+/)
+        if (parts.length < 2) {
+          return { response: '\x1b[31mUsage: /resume <session-id>\x1b[0m (Use /sessions to list available IDs)' }
+        }
+        const targetId = parts[1].trim()
+        const ok = agent.resumeSession(targetId)
+        if (ok) {
+          return {
+            response: `\x1b[32m✔ Resumed session [${targetId}]\x1b[0m\nModel: ${agent.provider.model}\nWorking Directory: ${agent.config.terminal?.cwd || process.cwd()}`,
+            updatedModel: agent.provider.model
+          }
+        } else {
+          return { response: `\x1b[31mSession not found: ${targetId}\x1b[0m` }
+        }
+      }
+
+      if (trimmed === '/new' || trimmed === '/reset') {
+        agent.resetSession()
+        return {
+          response: `\x1b[32m✔ Session reset. Started fresh conversation context.\x1b[0m`
+        }
+      }
+
+      if (trimmed === '/themes') {
+        const themeList = configManager.listThemes()
+        const currentCfg = configManager.loadConfig()
+        const lines = ['\x1b[36m[Available Themes]\x1b[0m']
+        for (const t of themeList) {
+          const isCur = t.name === currentCfg.themeName
+          lines.push(`${isCur ? '\x1b[32m▶ ' : '  '}\x1b[1m${t.name.padEnd(16)}\x1b[0m \x1b[2m(${t.displayName}${t.isBuiltIn ? '' : ' - Custom'})\x1b[0m${isCur ? ' \x1b[32m[Active]\x1b[0m' : ''}`)
+        }
+        lines.push(`\n\x1b[33mUsage:\x1b[0m /theme <name> (contoh: /theme synthwave)`)
+        return { response: lines.join('\n') }
+      }
+
+      if (trimmed.startsWith('/theme')) {
+        const parts = trimmed.split(/\s+/)
+        if (parts.length < 2) {
+          const currentCfg = configManager.loadConfig()
+          return {
+            response: `\x1b[36m[Active Theme]\x1b[0m: ${currentCfg.themeName}\n\x1b[33mUsage:\x1b[0m /theme <name>\n(Gunakan /themes untuk melihat daftar lengkap)`
+          }
+        }
+        const targetTheme = parts[1].trim()
+        const themeObj = configManager.getTheme(targetTheme)
+        if (!themeObj) {
+          return { response: `\x1b[31mTheme not found: ${targetTheme}\x1b[0m. Gunakan /themes untuk melihat daftar.` }
+        }
+        configManager.saveConfig({ themeName: targetTheme })
+        return {
+          response: `\x1b[32m✔ Theme switched to: ${targetTheme} (${themeObj.displayName})\x1b[0m`,
+          themeChange: targetTheme
+        }
+      }
+
+      if (trimmed === '/stats' || trimmed === '/cost') {
+        const cfg = agent.getConfig()
+        const currentSession = agent.getSessionId()
+        const p = cfg.providers['9router'] || {}
+        const model = agent.provider.model || p.model
+        const skillsCount = agent.skillLoader.list().length
+        const todosCount = agent.todoStore.read().length
+        const lines = [
+          '\x1b[36m╭─ ☤ Vallenatrix Telemetry & Stats ────────────────────────────────╮\x1b[0m',
+          `  Session ID       : \x1b[32m${currentSession}\x1b[0m`,
+          `  Active Model     : \x1b[35m${model}\x1b[0m`,
+          `  Provider BaseURL : ${agent.provider.baseURL}`,
+          `  Working Dir      : \x1b[33m${agent.config.terminal?.cwd || process.cwd()}\x1b[0m`,
+          `  Loaded Skills    : \x1b[36m${skillsCount} modular skills\x1b[0m`,
+          `  Active Todos     : \x1b[33m${todosCount} task(s)\x1b[0m`,
+          `  Memory Status    : Persistent (MEMORY.md & USER.md loaded)`,
+          '\x1b[36m╰──────────────────────────────────────────────────────────────────╯\x1b[0m'
+        ]
+        return { response: lines.join('\n') }
+      }
+
+      if (trimmed === '/pty' || trimmed === '/sh') {
+        return {
+          response: `\x1b[32m✔ Switching to Direct Shell Mode (PTY).\x1b[0m\nKetik langsung di terminal untuk bash/sh.\nTekan \x1b[33mCtrl+\`\x1b[0m atau \x1b[33mCtrl+T\x1b[0m untuk kembali ke AI Chat Mode.`,
+          togglePty: true
+        }
+      }
+
+      if (trimmed === '/help') {
+        return {
+          response: `\x1b[36m[Vallenatrix AI Agent Commands]\x1b[0m
+/model <name>  - Ganti model AI aktif (via 9router)
+/token <key>   - Set & simpan token API 9router
+/tools         - Tampilkan 12 toolset & tools bawaan
+/skills        - Lihat 59 loaded modular skills
+/themes        - Daftar semua tema warna UI
+/theme <name>  - Ganti tema warna UI secara instan
+/stats         - Telemetry sesi, model, & context stats
+/memory        - Lihat catatan memori & profil user
+/todos         - Lihat active task list
+/sessions      - Daftar riwayat percakapan tersimpan
+/resume <id>   - Lanjutkan percakapan sebelumnya
+/stop          - Hentikan turn agent yang sedang jalan
+/pty | /sh     - Masuk ke direct terminal bash (hotkey: Ctrl+\` / Ctrl+T)
+/new | /reset  - Mulai sesi percakapan baru
+/clear         - Bersihkan layar terminal
+/help          - Tampilkan panduan ini`
+        }
+      }
+
+      if (userModel) {
+        agent.setModel(userModel)
+      }
+
+      // Live status callback through webContents send
+      const callbacks = {
+        onThinking: (status: string) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS, { type: 'thinking', message: status })
+          }
+        },
+        onToolStart: (info: any) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS, { type: 'tool_start', message: info.preview })
+          }
+        },
+        onToolEnd: (info: any) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS, { type: 'tool_end', message: info.preview })
+          }
+        }
+      }
+
+      const res = await agent.chat(message, callbacks)
+      return {
+        response: res.response,
+        telemetry: {
+          totalTokens: res.totalTokens,
+          promptTokens: res.promptTokens,
+          completionTokens: res.completionTokens,
+          latencySec: res.latencySec,
+          tokensPerSec: res.tokensPerSec,
+          contextWindow: res.contextWindow
+        }
+      }
+    } catch (err: any) {
+      console.error('[Main] Agent chat error:', err)
+      return { error: err.message || 'Agent error' }
+    }
+  })
 }
 
 app.whenReady().then(() => {

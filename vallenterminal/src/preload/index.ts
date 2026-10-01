@@ -67,6 +67,23 @@ const api = {
     const listener = (_event: Electron.IpcRendererEvent, state: WindowState): void => callback(state)
     ipcRenderer.on(IPC_CHANNELS.WINDOW_STATE_CHANGE, listener)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.WINDOW_STATE_CHANGE, listener)
+  },
+
+  chatAgent: (message: string, model?: string): Promise<{
+    response?: string
+    error?: string
+    telemetry?: any
+    updatedModel?: string
+    themeChange?: string
+    togglePty?: boolean
+  }> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.AGENT_CHAT, { message, model })
+  },
+
+  onAgentStatus: (callback: (status: { type: string; message: string }) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: { type: string; message: string }): void => callback(status)
+    ipcRenderer.on(IPC_CHANNELS.AGENT_STATUS, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_STATUS, listener)
   }
 }
 

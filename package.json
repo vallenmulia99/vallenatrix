@@ -4,7 +4,8 @@
   "private": true,
   "description": "Terminal transparan + background anime",
   "workspaces": [
-    "vallenterminal"
+    "vallenterminal",
+    "vallenagent"
   ],
   "scripts": {
     "dev": "npm -w vallenterminal run dev",

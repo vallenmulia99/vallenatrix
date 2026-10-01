@@ -116,8 +116,8 @@ export function validateTheme(raw: unknown): Theme | null {
   }
 
   const theme: Theme = {
-    name: obj.name,
-    displayName: typeof obj.displayName === 'string' ? obj.displayName : obj.name,
+    name: String(obj.name),
+    displayName: typeof obj.displayName === 'string' ? obj.displayName : String(obj.name),
     colors: obj.colors as ThemeColors
   }
 

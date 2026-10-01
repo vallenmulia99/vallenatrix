@@ -60,6 +60,15 @@ const btnFontDec = document.getElementById('btn-font-dec') as HTMLButtonElement
 const btnFontInc = document.getElementById('btn-font-inc') as HTMLButtonElement
 const btnFontReset = document.getElementById('btn-font-reset') as HTMLButtonElement
 
+// Chat input elements
+const chatInput = document.getElementById('chat-input') as HTMLInputElement
+const btnSendChat = document.getElementById('btn-send-chat') as HTMLButtonElement
+const modelSelect = document.getElementById('model-select') as HTMLSelectElement
+const statusProgress = document.getElementById('status-progress') as HTMLSpanElement
+const statusContext = document.getElementById('status-context') as HTMLSpanElement
+const statusBarVisual = document.getElementById('status-bar-visual') as HTMLSpanElement
+const statusTelemetry = document.getElementById('status-telemetry') as HTMLSpanElement
+
 // Setup Terminal
 const term = new Terminal({
   allowTransparency: true,
@@ -95,10 +104,35 @@ requestAnimationFrame(() => {
   window.api.resizeTerminal(term.cols, term.rows)
 })
 
+let isDirectPtyMode = false
+
+function togglePtyMode(force?: boolean): void {
+  isDirectPtyMode = force !== undefined ? force : !isDirectPtyMode
+  const statusSymbol = document.querySelector('.status-symbol') as HTMLElement
+
+  if (isDirectPtyMode) {
+    if (statusSymbol) {
+      statusSymbol.textContent = '💻'
+      statusSymbol.title = 'Direct PTY Shell Active (Ctrl+` to switch back to AI)'
+    }
+    statusProgress.textContent = 'PTY Shell Active'
+    term.focus()
+  } else {
+    if (statusSymbol) {
+      statusSymbol.textContent = '☤'
+      statusSymbol.title = 'Vallenatrix AI Agent Active (Ctrl+` to switch to PTY)'
+    }
+    statusProgress.textContent = 'Ready'
+    chatInput.focus()
+  }
+}
+
 // Two-way PTY Communication
 term.onData((data) => {
-  window.api.sendTerminalData(data)
-  pet.onUserActivity()
+  if (isDirectPtyMode) {
+    window.api.sendTerminalData(data)
+    pet.onUserActivity()
+  }
 })
 
 window.api.onTerminalData((data) => {
@@ -130,6 +164,51 @@ window.addEventListener('resize', () => {
 btnMinimize.addEventListener('click', () => window.api.minimizeWindow())
 btnMaximize.addEventListener('click', () => window.api.maximizeWindow())
 btnClose.addEventListener('click', () => window.api.closeWindow())
+
+// Global keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  // Ctrl+Shift+R: Refresh UI
+  if (e.ctrlKey && e.shiftKey && e.key === 'R') {
+    e.preventDefault()
+    window.location.reload()
+    return
+  }
+
+  // Ctrl+` or Ctrl+T: Toggle between AI Chat Mode and Direct PTY Shell Mode
+  if ((e.ctrlKey && e.key === '`') || (e.ctrlKey && e.key === 't')) {
+    e.preventDefault()
+    togglePtyMode()
+    return
+  }
+
+  // If in direct PTY shell mode, allow all typing directly to xterm
+  if (isDirectPtyMode) {
+    return
+  }
+
+  // Block typing outside chat input (except terminal and settings)
+  const target = e.target as HTMLElement
+  const isChatInput = target === chatInput || target.id === 'chat-input'
+  const isSettingsInput = settingsPanel.contains(target) && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')
+  const isTerminalArea = target.classList.contains('xterm') || target.closest('.xterm') !== null
+  
+  // Block printable keys outside allowed areas
+  if (!isChatInput && !isSettingsInput && !isTerminalArea) {
+    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+  }
+})
+
+// Enable context menu on terminal for copy
+terminalContainer.addEventListener('contextmenu', (e) => {
+  const selection = term.getSelection()
+  if (selection) {
+    e.preventDefault()
+    navigator.clipboard.writeText(selection)
+  }
+})
 
 // Helper to construct vallen-media URL
 function getMediaUrl(filePath: string): string {
@@ -246,12 +325,9 @@ window.addEventListener('keydown', async (e) => {
     return
   }
 
+  // Paste disabled - terminal is read-only, use chat input instead
   if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
     e.preventDefault()
-    const text = await navigator.clipboard.readText()
-    if (text) {
-      term.paste(text)
-    }
     return
   }
 })
@@ -264,18 +340,10 @@ term.onSelectionChange(() => {
   }
 })
 
-// Middle-click to paste into terminal
-terminalContainer.addEventListener('auxclick', async (e) => {
+// Middle-click paste disabled (terminal read-only)
+terminalContainer.addEventListener('auxclick', (e) => {
   if (e.button === 1) {
     e.preventDefault()
-    try {
-      const text = await navigator.clipboard.readText()
-      if (text) {
-        term.paste(text)
-      }
-    } catch {
-      // Clipboard read failed
-    }
   }
 })
 
@@ -439,6 +507,259 @@ btnClearFile.addEventListener('click', async () => {
   await window.api.saveConfig({ background: activeConfig.background })
 })
 
+function updateSelectedModelOption(modelName: string): void {
+  if (!modelName || !modelSelect) return
+  let found = false
+  for (let i = 0; i < modelSelect.options.length; i++) {
+    if (modelSelect.options[i].value === modelName) {
+      modelSelect.selectedIndex = i
+      found = true
+      break
+    }
+  }
+  if (!found) {
+    const opt = document.createElement('option')
+    opt.value = modelName
+    opt.textContent = modelName.length > 25 ? modelName.slice(0, 23) + '…' : modelName
+    opt.title = modelName
+    modelSelect.appendChild(opt)
+    modelSelect.value = modelName
+  }
+}
+
+modelSelect.addEventListener('change', async () => {
+  const chosen = modelSelect.value
+  term.writeln(`\r\n\x1b[36m> /model ${chosen}\x1b[0m`)
+  const res = await window.api.chatAgent(`/model ${chosen}`)
+  if (res.response) {
+    for (const line of res.response.split('\n')) {
+      term.writeln(line)
+    }
+  }
+})
+
+// Chat Input Handlers
+async function sendChatMessage() {
+  const message = chatInput.value.trim()
+  if (!message) return
+  
+  chatInput.value = ''
+
+  if (message === '/clear') {
+    term.clear()
+    return
+  }
+
+  // Handle Slash Commands (e.g. /token, /model, /skills, /help)
+  if (message.startsWith('/')) {
+    term.writeln(`\r\n\x1b[36m> ${message}\x1b[0m`)
+    try {
+      const res = await window.api.chatAgent(message)
+      if (res.error) {
+        term.writeln(`\x1b[31m[Command Error]\x1b[0m ${res.error}`)
+      } else if (res.response) {
+        for (const line of res.response.split('\n')) {
+          term.writeln(line)
+        }
+      }
+      if (res.updatedModel) {
+        updateSelectedModelOption(res.updatedModel)
+      }
+      if (res.themeChange) {
+        const newTheme = await window.api.getTheme(res.themeChange)
+        if (newTheme) applyTheme(newTheme)
+      }
+      if (res.togglePty) {
+        togglePtyMode(true)
+      }
+    } catch (err: any) {
+      term.writeln(`\x1b[31m[Command Error]\x1b[0m ${err.message || 'Failed to execute command'}`)
+    }
+    chatInput.focus()
+    return
+  }
+
+  const selectedModel = modelSelect.value
+  
+  // Display user message in terminal
+  term.writeln(`\r\n\x1b[32m[You]\x1b[0m \x1b[37m${message}\x1b[0m`)
+  statusProgress.textContent = 'Agent thinking...'
+
+  try {
+    const res = await window.api.chatAgent(message, selectedModel)
+    if (res.error) {
+      term.writeln(`\x1b[31m[Agent Error]\x1b[0m ${res.error}`)
+    } else if (res.response) {
+      const boxWidth = Math.max(60, Math.min(term.cols - 2, 80))
+      const topFill = Math.max(0, boxWidth - 18)
+      const topBar = `\x1b[36m╭─ ☤ Vallenatrix ${'─'.repeat(topFill)}╮\x1b[0m`
+      const botBar = `\x1b[36m╰${'─'.repeat(Math.max(0, boxWidth - 2))}╯\x1b[0m`
+      term.writeln(`\r\n${topBar}`)
+      for (const line of res.response.split('\n')) {
+        term.writeln(line)
+      }
+      term.writeln(`${botBar}\r\n`)
+      if (res.telemetry) {
+        updateStatusBarMetrics(res.telemetry)
+      }
+    }
+  } catch (err: any) {
+    term.writeln(`\x1b[31m[Agent Error]\x1b[0m ${err.message || 'Failed to chat with agent'}`)
+  }
+
+  statusProgress.textContent = 'Ready'
+  chatInput.focus()
+}
+
+function updateStatusBarMetrics(meta?: {
+  totalTokens?: number
+  contextWindow?: number
+  latencySec?: number
+  tokensPerSec?: number
+}) {
+  if (!meta) return
+  const total = meta.totalTokens ?? 0
+  const win = meta.contextWindow || 1_048_576
+  const kTotal = total >= 1000 ? (total / 1000).toFixed(1) + 'K' : String(total)
+  const kWin = win >= 1_000_000 ? (win / 1_000_000).toFixed(0) + 'M' : (win / 1000).toFixed(0) + 'K'
+  const pct = Math.min(100, Math.max(0, Math.round((total / win) * 100)))
+
+  // Visual Bar: [██░░░░░░░░]
+  const filled = Math.min(10, Math.max(pct > 0 ? 1 : 0, Math.round(pct / 10)))
+  const empty = 10 - filled
+  const bar = `[${'█'.repeat(filled)}${'░'.repeat(empty)}]`
+
+  // Threshold colors: <50% green, 50-80% yellow, >80% orange, >95% red
+  let color = '#4caf50'
+  if (pct >= 95) color = '#f44336'
+  else if (pct >= 80) color = '#ff9800'
+  else if (pct >= 50) color = '#ffeb3b'
+
+  if (statusContext) statusContext.textContent = `~${kTotal}/${kWin}`
+  if (statusBarVisual) {
+    statusBarVisual.textContent = `${bar} ~${pct}%`
+    statusBarVisual.style.color = color
+  }
+  if (statusTelemetry && meta.latencySec !== undefined) {
+    const lat = `${meta.latencySec.toFixed(1)}s`
+    const vel = meta.tokensPerSec ? `${meta.tokensPerSec} t/s` : '0 t/s'
+    statusTelemetry.textContent = `◷ ${lat} │ ↑ ${vel}`
+  }
+}
+
+// Listen for live agent tool execution & thinking updates
+window.api.onAgentStatus((status) => {
+  if (status.type === 'thinking') {
+    statusProgress.textContent = status.message
+  } else if (status.type === 'tool_start') {
+    term.writeln(status.message)
+    statusProgress.textContent = 'Agent running tool...'
+  } else if (status.type === 'tool_end') {
+    for (const line of status.message.split('\n')) {
+      term.writeln(line)
+    }
+    statusProgress.textContent = 'Tool completed'
+  }
+})
+
+btnSendChat.addEventListener('click', sendChatMessage)
+
+// Slash Commands Autocomplete System
+const slashAutocomplete = document.getElementById('slash-autocomplete') as HTMLDivElement
+const SLASH_COMMANDS = [
+  { cmd: '/model', desc: 'Ganti atau cek model AI (via 9router)' },
+  { cmd: '/token', desc: 'Koneksikan token API 9router' },
+  { cmd: '/tools', desc: 'Lihat daftar 12 toolset & tools' },
+  { cmd: '/skills', desc: 'Lihat daftar 59 loaded skills' },
+  { cmd: '/themes', desc: 'Lihat daftar tema warna UI' },
+  { cmd: '/theme', desc: 'Ganti tema warna UI secara instan' },
+  { cmd: '/stats', desc: 'Telemetry sesi, model & context' },
+  { cmd: '/pty', desc: 'Beralih ke Direct Bash Shell (Ctrl+`)' },
+  { cmd: '/memory', desc: 'Lihat catatan memori & profil user' },
+  { cmd: '/todos', desc: 'Lihat daftar tugas (active task list)' },
+  { cmd: '/sessions', desc: 'Daftar riwayat sesi chat tersimpan' },
+  { cmd: '/resume', desc: 'Lanjutkan sesi chat sebelumnya' },
+  { cmd: '/stop', desc: 'Hentikan paksa turn yang sedang jalan' },
+  { cmd: '/new', desc: 'Mulai percakapan sesi baru' },
+  { cmd: '/clear', desc: 'Bersihkan tampilan layar terminal' },
+  { cmd: '/help', desc: 'Bantuan lengkap semua perintah' }
+]
+
+let activeSlashIndex = 0
+let filteredSlashCommands = [...SLASH_COMMANDS]
+
+function renderSlashAutocomplete(): void {
+  if (!slashAutocomplete) return
+  if (filteredSlashCommands.length === 0) {
+    slashAutocomplete.classList.add('hidden')
+    return
+  }
+  slashAutocomplete.innerHTML = ''
+  filteredSlashCommands.forEach((item, idx) => {
+    const div = document.createElement('div')
+    div.className = `slash-item ${idx === activeSlashIndex ? 'active' : ''}`
+    div.innerHTML = `<span class="slash-item-cmd">${item.cmd}</span><span class="slash-item-desc">${item.desc}</span>`
+    div.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      applySlashCommand(item.cmd)
+    })
+    slashAutocomplete.appendChild(div)
+  })
+  slashAutocomplete.classList.remove('hidden')
+}
+
+function applySlashCommand(cmd: string): void {
+  chatInput.value = `${cmd} `
+  slashAutocomplete.classList.add('hidden')
+  chatInput.focus()
+}
+
+chatInput.addEventListener('input', () => {
+  const val = chatInput.value
+  if (val.startsWith('/') && !val.includes(' ')) {
+    const query = val.slice(1).toLowerCase()
+    filteredSlashCommands = SLASH_COMMANDS.filter(s => s.cmd.slice(1).startsWith(query))
+    activeSlashIndex = 0
+    renderSlashAutocomplete()
+  } else {
+    slashAutocomplete?.classList.add('hidden')
+  }
+})
+
+chatInput.addEventListener('keydown', (e) => {
+  if (slashAutocomplete && !slashAutocomplete.classList.contains('hidden')) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      activeSlashIndex = (activeSlashIndex + 1) % filteredSlashCommands.length
+      renderSlashAutocomplete()
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      activeSlashIndex = (activeSlashIndex - 1 + filteredSlashCommands.length) % filteredSlashCommands.length
+      renderSlashAutocomplete()
+      return
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      if (filteredSlashCommands[activeSlashIndex]) {
+        applySlashCommand(filteredSlashCommands[activeSlashIndex].cmd)
+      }
+      return
+    }
+    if (e.key === 'Escape') {
+      slashAutocomplete.classList.add('hidden')
+      return
+    }
+  }
+
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    slashAutocomplete?.classList.add('hidden')
+    sendChatMessage()
+  }
+})
+
 // Initialize Application
 async function init(): Promise<void> {
   activeConfig = await window.api.getConfig()
@@ -473,6 +794,12 @@ async function init(): Promise<void> {
 
   applyBackground()
   updateSettingsForm()
+
+  const statusSymbolEl = document.querySelector('.status-symbol') as HTMLElement
+  if (statusSymbolEl) {
+    statusSymbolEl.style.cursor = 'pointer'
+    statusSymbolEl.addEventListener('click', () => togglePtyMode())
+  }
 
   fitAddon.fit()
   window.api.resizeTerminal(term.cols, term.rows)

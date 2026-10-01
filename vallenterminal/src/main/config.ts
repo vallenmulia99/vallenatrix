@@ -49,7 +49,11 @@ export class ConfigManager {
 
   saveConfig(newConfig: Partial<AppConfig>): AppConfig {
     const current = this.loadConfig()
-    const merged = sanitizeConfig({ ...current, ...newConfig })
+    // Security: do not allow renderer to modify shell binary via IPC
+    const safePartial = { ...newConfig }
+    delete (safePartial as any).shell
+
+    const merged = sanitizeConfig({ ...current, ...safePartial, shell: current.shell })
     try {
       writeFileSync(this.configPath, JSON.stringify(merged, null, 2), 'utf-8')
     } catch {

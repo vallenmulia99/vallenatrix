@@ -1,4 +1,44 @@
 import { spawn, IPty } from 'node-pty'
+import { existsSync, readFileSync, accessSync, constants } from 'fs'
+import { isAbsolute } from 'path'
+
+function getValidShell(preferredShell: string): string {
+  const defaultFallback = process.env.SHELL || '/bin/bash'
+
+  if (!preferredShell || typeof preferredShell !== 'string') {
+    return defaultFallback
+  }
+
+  // Must be an absolute path
+  if (!isAbsolute(preferredShell)) {
+    return defaultFallback
+  }
+
+  // Must exist and be executable
+  try {
+    accessSync(preferredShell, constants.X_OK)
+  } catch {
+    return defaultFallback
+  }
+
+  // Check /etc/shells if available on unix
+  if (process.platform !== 'win32' && existsSync('/etc/shells')) {
+    try {
+      const shellsContent = readFileSync('/etc/shells', 'utf-8')
+      const allowed = shellsContent
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith('#'))
+      if (!allowed.includes(preferredShell)) {
+        return defaultFallback
+      }
+    } catch {
+      // If /etc/shells unreadable, allow executable path
+    }
+  }
+
+  return preferredShell
+}
 
 export class PtyManager {
   private ptyProcess: IPty | null = null
@@ -10,7 +50,7 @@ export class PtyManager {
   ): IPty {
     this.kill()
 
-    const chosenShell = shell || process.env.SHELL || '/bin/bash'
+    const chosenShell = getValidShell(shell)
     const cwd = process.env.HOME || process.cwd()
 
     this.ptyProcess = spawn(chosenShell, [], {

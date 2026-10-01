@@ -27,17 +27,20 @@ Penggunaan:
   vallenatrix [opsi]
 
 Opsi:
-  --foreground, -f    Jalankan terminal di foreground (tampilkan log ke stdout/stderr)
-  --version, -v       Tampilkan versi vallenatrix
-  --help, -h          Tampilkan bantuan ini
+  --foreground, -f        Jalankan terminal di foreground (tampilkan log ke stdout/stderr)
+  --replace-terminal, -r  Tutup terminal pemanggil dan ganti dengan Vallenatrix
+  --version, -v, -versi   Tampilkan versi vallenatrix
+  --help, -h              Tampilkan bantuan ini
 
 Contoh:
   vallenatrix               # Jalankan di background (lepas dari shell)
+  vallenatrix -r            # Jalankan dan gantikan terminal saat ini
   vallenatrix --foreground  # Jalankan di foreground untuk debugging
 EOF
 }
 
 FOREGROUND=0
+REPLACE_TERMINAL=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -51,6 +54,9 @@ for arg in "$@"; do
       ;;
     --foreground|-f)
       FOREGROUND=1
+      ;;
+    --replace-terminal|-r)
+      REPLACE_TERMINAL=1
       ;;
     *)
       echo "Opsi tidak dikenal: $arg"
@@ -85,25 +91,20 @@ if [ "$FOREGROUND" -eq 1 ]; then
   exec "$ELECTRON_BIN" "$MAIN_BUILD"
 else
   CALLER_WIN="${WINDOWID:-}"
-  if [ -z "$CALLER_WIN" ] && command -v xdotool >/dev/null 2>&1; then
+  if [ "$REPLACE_TERMINAL" -eq 1 ] && [ -z "$CALLER_WIN" ] && command -v xdotool >/dev/null 2>&1; then
     CALLER_WIN=$(xdotool getactivewindow 2>/dev/null || true)
   fi
 
   # Start Electron completely detached in a new session (setsid)
   setsid "$ELECTRON_BIN" "$MAIN_BUILD" </dev/null >/dev/null 2>&1 &
 
-  printf "Loading Vallenatrix: "
-  for i in 1 2 3 4 5; do
-    printf "%d " "$i"
-    sleep 0.18
-  done
-  printf "Done!\n"
-  sleep 0.2
-
-  # Close caller terminal window
-  if [ -n "$CALLER_WIN" ]; then
-    xdotool windowclose "$CALLER_WIN" 2>/dev/null || true
+  if [ "$REPLACE_TERMINAL" -eq 1 ]; then
+    sleep 0.3
+    if [ -n "$CALLER_WIN" ] && command -v xdotool >/dev/null 2>&1; then
+      xdotool windowclose "$CALLER_WIN" 2>/dev/null || true
+    else
+      kill -HUP "$PPID" 2>/dev/null || true
+    fi
   fi
-  kill -9 "$PPID" 2>/dev/null || true
   exit 0
 fi

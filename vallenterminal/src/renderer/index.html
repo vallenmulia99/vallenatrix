@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Vallenatrix Terminal</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      user-select: none;
+    }
+
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: transparent;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    /* Background Layers */
+    #bg-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    #bg-video {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: none;
+    }
+
+    #bg-image {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-position: center;
+      background-repeat: no-repeat;
+      background-size: cover;
+      display: none;
+    }
+
+    /* Dim and blur overlay */
+    #overlay-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      pointer-events: none;
+      background-color: rgba(15, 17, 23, 0.4);
+      transition: background-color 0.2s ease, backdrop-filter 0.2s ease;
+    }
+
+    /* App Container */
+    #app {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 3;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Titlebar */
+    #titlebar {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      -webkit-app-region: drag;
+      background: #0a0c12 !important;
+      border-bottom: 1px solid #1a1e29;
+      color: #ffffff;
+      font-size: 12px;
+      letter-spacing: 0.5px;
+      opacity: 1 !important;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+      z-index: 10;
+    }
+
+    .titlebar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+    }
+
+    .titlebar-icon {
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      background: linear-gradient(135deg, #ff2a6d, #05d9e8);
+      box-shadow: 0 0 8px rgba(5, 217, 232, 0.7);
+      flex-shrink: 0;
+    }
+
+    .titlebar-title {
+      color: #ffffff !important;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 0.8px;
+      opacity: 1 !important;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+    }
+
+    .titlebar-controls {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      -webkit-app-region: no-drag;
+    }
+
+    .btn-icon {
+      background: transparent;
+      border: none;
+      color: #ffffff !important;
+      width: 28px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+      opacity: 1 !important;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .btn-icon:hover {
+      background: rgba(255, 255, 255, 0.18);
+      color: #ffffff !important;
+    }
+
+    .btn-close:hover {
+      background: #e81123 !important;
+      color: #ffffff !important;
+    }
+
+    /* Terminal Container */
+    #terminal-container {
+      flex: 1;
+      width: 100%;
+      height: calc(100% - 34px);
+      padding: 6px 8px;
+      overflow: hidden;
+      position: relative;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    #terminal {
+      width: 100%;
+      height: 100%;
+      opacity: 1 !important;
+    }
+
+    .xterm {
+      height: 100%;
+      user-select: text;
+      opacity: 1 !important;
+    }
+
+    .xterm-viewport {
+      background-color: transparent !important;
+    }
+
+    .xterm-screen {
+      opacity: 1 !important;
+    }
+
+    .xterm-rows {
+      opacity: 1 !important;
+      font-weight: 600;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95), 0 0 1px rgba(0, 0, 0, 1);
+    }
+
+    /* Terminal Pet */
+    .terminal-pet {
+      position: absolute;
+      bottom: 2px;
+      left: 0;
+      width: 36px;
+      height: 27px;
+      z-index: 5;
+      cursor: pointer;
+      user-select: none;
+      transform-origin: bottom center;
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.8));
+    }
+
+    .terminal-pet:hover {
+      filter: drop-shadow(0 0 6px rgba(5, 217, 232, 0.9));
+    }
+
+    .pet-sprite {
+      width: 100%;
+      height: 100%;
+      image-rendering: pixelated;
+    }
+
+    .pet-bubble {
+      position: absolute;
+      top: -24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(10, 12, 18, 0.95);
+      border: 1px solid #05d9e8;
+      border-radius: 6px;
+      padding: 2px 6px;
+      font-size: 10px;
+      font-weight: 700;
+      color: #05d9e8;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      box-shadow: 0 0 8px rgba(5, 217, 232, 0.4);
+    }
+
+    .pet-bubble.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(-3px);
+    }
+
+    /* Settings Panel */
+    #settings-panel {
+      position: absolute;
+      top: 34px;
+      right: 0;
+      bottom: 0;
+      width: 340px;
+      max-width: 90vw;
+      background: rgba(18, 20, 28, 0.88);
+      backdrop-filter: blur(16px);
+      border-left: 1px solid rgba(255, 255, 255, 0.1);
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      color: #e0e4f0;
+      font-size: 13px;
+    }
+
+    #settings-panel.open {
+      transform: translateX(0);
+    }
+
+    .settings-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .settings-body {
+      padding: 16px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .setting-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .setting-label {
+      font-size: 12px;
+      color: #8b92a5;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .setting-input, .setting-select {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      color: #ffffff;
+      padding: 6px 10px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .setting-input:focus, .setting-select:focus {
+      border-color: #eb6f92;
+    }
+
+    .setting-select option {
+      background: #191b24;
+      color: #ffffff;
+    }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .setting-slider {
+      flex: 1;
+      accent-color: #eb6f92;
+      cursor: pointer;
+    }
+
+    .setting-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #ffffff;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.15s;
+      text-align: center;
+    }
+
+    .setting-btn:hover {
+      background: rgba(255, 255, 255, 0.16);
+    }
+
+    .setting-btn.btn-accent {
+      background: #eb6f92;
+      border-color: #eb6f92;
+      color: #191724;
+      font-weight: 600;
+    }
+
+    .setting-btn.btn-accent:hover {
+      background: #f082a2;
+    }
+
+    .file-status {
+      font-size: 11px;
+      color: #9ccfd8;
+      word-break: break-all;
+      margin-top: 2px;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Layer 1: Background Media -->
+  <div id="bg-layer">
+    <video id="bg-video" loop muted playsinline></video>
+    <div id="bg-image"></div>
+  </div>
+
+  <!-- Layer 2: Overlay / Dim / Blur -->
+  <div id="overlay-layer"></div>
+
+  <!-- Layer 3: Terminal UI -->
+  <div id="app">
+    <div id="titlebar">
+      <div class="titlebar-left">
+        <div class="titlebar-icon"></div>
+        <span class="titlebar-title">vallenatrix</span>
+      </div>
+      <div class="titlebar-controls">
+        <button id="btn-settings" class="btn-icon" title="Pengaturan (Ctrl+,)">⚙</button>
+        <button id="btn-minimize" class="btn-icon" title="Minimize">−</button>
+        <button id="btn-maximize" class="btn-icon" title="Maximize">□</button>
+        <button id="btn-close" class="btn-icon btn-close" title="Close">✕</button>
+      </div>
+    </div>
+    <div id="terminal-container">
+      <div id="terminal"></div>
+    </div>
+  </div>
+
+  <!-- Layer 4: Settings Panel -->
+  <div id="settings-panel">
+    <div class="settings-header">
+      <span>Pengaturan Vallenatrix</span>
+      <button id="btn-settings-close" class="btn-icon">✕</button>
+    </div>
+    <div class="settings-body">
+      <!-- Theme Selection -->
+      <div class="setting-group">
+        <label class="setting-label">Tema Warna</label>
+        <select id="setting-theme" class="setting-select"></select>
+      </div>
+
+      <!-- Background Type -->
+      <div class="setting-group">
+        <label class="setting-label">Tipe Background</label>
+        <select id="setting-bg-type" class="setting-select">
+          <option value="none">Transparan Polos (Desktop)</option>
+          <option value="image">Gambar / GIF</option>
+          <option value="video">Video (.mp4 / .webm)</option>
+        </select>
+      </div>
+
+      <!-- File Chooser -->
+      <div id="setting-file-container" class="setting-group" style="display: none;">
+        <label class="setting-label">File Media</label>
+        <div class="setting-row">
+          <button id="btn-choose-file" class="setting-btn btn-accent" style="flex: 1;">Pilih File Media...</button>
+          <button id="btn-clear-file" class="setting-btn">Hapus</button>
+        </div>
+        <div id="file-path-display" class="file-status">Belum ada file dipilih</div>
+      </div>
+
+      <!-- Fit Mode -->
+      <div id="setting-fit-container" class="setting-group" style="display: none;">
+        <label class="setting-label">Posisi / Fit Media</label>
+        <select id="setting-bg-fit" class="setting-select">
+          <option value="cover">Cover (Penuh)</option>
+          <option value="contain">Contain (Muat)</option>
+          <option value="fill">Fill (Regang)</option>
+        </select>
+      </div>
+
+      <!-- Dim Level -->
+      <div class="setting-group">
+        <div class="setting-label">
+          <span>Dim Gelap (Teks Terbaca)</span>
+          <span id="label-dim-val">30%</span>
+        </div>
+        <input id="setting-dim" type="range" min="0" max="100" value="30" class="setting-slider">
+      </div>
+
+      <!-- Media Opacity -->
+      <div id="setting-opacity-container" class="setting-group" style="display: none;">
+        <div class="setting-label">
+          <span>Transparansi Media</span>
+          <span id="label-media-opacity-val">80%</span>
+        </div>
+        <input id="setting-media-opacity" type="range" min="10" max="100" value="80" class="setting-slider">
+      </div>
+
+      <!-- Window Opacity -->
+      <div class="setting-group">
+        <div class="setting-label">
+          <span>Opasitas Window</span>
+          <span id="label-win-opacity-val">95%</span>
+        </div>
+        <input id="setting-win-opacity" type="range" min="10" max="100" value="95" class="setting-slider">
+      </div>
+
+      <!-- Blur Level -->
+      <div class="setting-group">
+        <div class="setting-label">
+          <span>Background Blur</span>
+          <span id="label-blur-val">0px</span>
+        </div>
+        <input id="setting-blur" type="range" min="0" max="25" value="0" class="setting-slider">
+      </div>
+
+      <!-- Video Auto Pause -->
+      <div id="setting-autopause-container" class="setting-group" style="display: none;">
+        <label class="setting-label" style="cursor: pointer;">
+          <span>Pause Video Saat Window Tidak Fokus</span>
+          <input id="setting-autopause" type="checkbox" checked style="accent-color: #eb6f92;">
+        </label>
+      </div>
+
+      <!-- Pet Toggle -->
+      <div class="setting-group">
+        <label class="setting-label" style="cursor: pointer;">
+          <span>Terminal Pet (Kucing Jalan)</span>
+          <input id="setting-pet-toggle" type="checkbox" checked style="accent-color: #05d9e8;">
+        </label>
+      </div>
+
+      <!-- Pet Scale -->
+      <div id="setting-pet-scale-container" class="setting-group">
+        <div class="setting-label">
+          <span>Ukuran Pet</span>
+          <span id="label-pet-scale-val">100%</span>
+        </div>
+        <input id="setting-pet-scale" type="range" min="40" max="250" value="100" class="setting-slider">
+      </div>
+
+      <!-- Font Size -->
+      <div class="setting-group">
+        <div class="setting-label">
+          <span>Ukuran Font</span>
+          <span id="label-font-size-val">14px</span>
+        </div>
+        <div class="setting-row">
+          <button id="btn-font-dec" class="setting-btn" style="flex: 1;">A- (Ctrl+-)</button>
+          <button id="btn-font-reset" class="setting-btn">Reset</button>
+          <button id="btn-font-inc" class="setting-btn" style="flex: 1;">A+ (Ctrl+=)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

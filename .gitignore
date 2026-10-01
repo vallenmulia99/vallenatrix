@@ -1,0 +1,28 @@
+node_modules/
+dist/
+out/
+*.log
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+vallenterminal/dist/
+vallenterminal/out/
+vallenterminal/.vite/
+
+# IDE
+.vscode/
+.idea/
+
+# Local config & credentials
+*.local
+*.env
+*.token
+update.bat
+update.sh
+
+# Temp
+.cache/
+tmp/
+*.bak
+*.orig.*

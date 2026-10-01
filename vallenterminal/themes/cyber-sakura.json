@@ -1,0 +1,31 @@
+{
+  "name": "cyber-sakura",
+  "displayName": "Cyber Sakura",
+  "colors": {
+    "black": "#1f1d2e",
+    "red": "#eb6f92",
+    "green": "#31748f",
+    "yellow": "#f6c177",
+    "blue": "#9ccfd8",
+    "magenta": "#c4a7e7",
+    "cyan": "#ebbcba",
+    "white": "#ffffff",
+    "brightBlack": "#26233a",
+    "brightRed": "#eb6f92",
+    "brightGreen": "#31748f",
+    "brightYellow": "#f6c177",
+    "brightBlue": "#9ccfd8",
+    "brightMagenta": "#c4a7e7",
+    "brightCyan": "#ebbcba",
+    "brightWhite": "#ffffff",
+    "foreground": "#ffffff",
+    "background": "#191724",
+    "cursor": "#eb6f92",
+    "cursorAccent": "#191724",
+    "selectionBackground": "#393552"
+  },
+  "backgroundPreset": {
+    "dim": 0.35,
+    "opacity": 0.85
+  }
+}

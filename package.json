@@ -1,0 +1,19 @@
+{
+  "name": "vallenatrix",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Terminal transparan + background anime",
+  "workspaces": [
+    "vallenterminal"
+  ],
+  "scripts": {
+    "dev": "npm -w vallenterminal run dev",
+    "build": "npm -w vallenterminal run build",
+    "rebuild:pty": "cd node_modules/node-pty && npx --yes node-gyp@10 rebuild --target=28.0.0 --arch=x64 --dist-url=https://electronjs.org/headers",
+    "start": "npm -w vallenterminal run start",
+    "test": "npm -w vallenterminal run test"
+  },
+  "keywords": ["terminal", "electron"],
+  "author": "vallenganteng",
+  "license": "MIT"
+}

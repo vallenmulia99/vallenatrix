@@ -1,0 +1,31 @@
+{
+  "name": "monochrome-ghost",
+  "displayName": "Monochrome Ghost",
+  "colors": {
+    "black": "#121417",
+    "red": "#e06c75",
+    "green": "#98c379",
+    "yellow": "#e5c07b",
+    "blue": "#61afef",
+    "magenta": "#c678dd",
+    "cyan": "#56b6c2",
+    "white": "#ffffff",
+    "brightBlack": "#282c34",
+    "brightRed": "#be5046",
+    "brightGreen": "#98c379",
+    "brightYellow": "#d19a66",
+    "brightBlue": "#61afef",
+    "brightMagenta": "#c678dd",
+    "brightCyan": "#56b6c2",
+    "brightWhite": "#ffffff",
+    "foreground": "#ffffff",
+    "background": "#0f1115",
+    "cursor": "#56b6c2",
+    "cursorAccent": "#0f1115",
+    "selectionBackground": "#2c313a"
+  },
+  "backgroundPreset": {
+    "dim": 0.3,
+    "opacity": 0.9
+  }
+}

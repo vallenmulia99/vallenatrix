@@ -1,0 +1,31 @@
+{
+  "name": "neo-evangelion",
+  "displayName": "Neo Evangelion",
+  "colors": {
+    "black": "#120a1c",
+    "red": "#ff3860",
+    "green": "#00ff66",
+    "yellow": "#ffaa00",
+    "blue": "#795290",
+    "magenta": "#9933cc",
+    "cyan": "#00e5ff",
+    "white": "#e1d8ea",
+    "brightBlack": "#2b1a3e",
+    "brightRed": "#ff5c7c",
+    "brightGreen": "#33ff85",
+    "brightYellow": "#ffbe33",
+    "brightBlue": "#9e71b8",
+    "brightMagenta": "#b84dff",
+    "brightCyan": "#33ebff",
+    "brightWhite": "#ffffff",
+    "foreground": "#00ff66",
+    "background": "#140c20",
+    "cursor": "#ff9900",
+    "cursorAccent": "#140c20",
+    "selectionBackground": "#452269"
+  },
+  "backgroundPreset": {
+    "dim": 0.45,
+    "opacity": 0.85
+  }
+}

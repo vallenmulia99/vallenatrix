@@ -27,3 +27,10 @@
   - Mencegah eksekusi arbitrary code jika ada input teks yang berbahaya.
   - Semua operasi file dan pty ditangani di Main process dan diverifikasi sebelum dieksekusi.
   - Media background dilayani lewat custom standard protocol `vallen-media://` dengan validasi ekstensi dan batas ukuran file (maks 500MB).
+
+## 5. Pengerasan Keamanan & Input (Audit Fase 1)
+- **Navigasi & Web Links:** Menolak child window via `setWindowOpenHandler` dan memblokir navigasi liar via `will-navigate`. Tautan eksternal divalidasi hanya protokol `http:`/`https:`. CSP ketat diterapkan di `index.html`.
+- **Validasi Theme & Anti-Traversal:** Whitelist nama tema `^[a-z0-9][a-z0-9-_]{0,63}$` serta pengecekan `resolve()` direktori tema untuk menggagalkan path traversal (`../`).
+- **Sanitasi Shell Binary:** Konfigurasi `shell` dihapus dari IPC `CONFIG_SAVE`. Shell diverifikasi path absolut, file executable (`X_OK`), dan terdaftar di `/etc/shells`.
+- **Bracketed Paste:** Penggunaan `term.paste(text)` untuk mengaktifkan bracketed-paste escape sequence shell, serta penambahan paste via middle-click.
+- **Launcher Non-Destruktif:** Mode standar tidak lagi membunuh parent process. Opsi `--replace-terminal` (`-r`) disediakan secara eksplisit bagi yang menginginkan penutupan terminal pemanggil.

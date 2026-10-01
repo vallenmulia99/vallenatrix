@@ -100,12 +100,13 @@ function createWindow(): void {
   ptyManager.spawn(
     config.shell,
     (data) => {
-      mainWindow?.webContents.send(IPC_CHANNELS.TERMINAL_DATA, data)
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.TERMINAL_DATA, data)
+      }
     },
     (_exitCode) => {
-      mainWindow?.webContents.send(IPC_CHANNELS.TERMINAL_EXIT, _exitCode)
-      // Close window when shell exits (e.g. user ran 'exit')
       if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.TERMINAL_EXIT, _exitCode)
         mainWindow.close()
       }
     }

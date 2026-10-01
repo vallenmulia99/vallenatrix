@@ -105,9 +105,25 @@ window.api.onTerminalData((data) => {
   term.write(data)
 })
 
+const titlebarEl = document.getElementById('titlebar') as HTMLDivElement
+
+// Double click titlebar to toggle maximize
+titlebarEl.addEventListener('dblclick', (e) => {
+  // Ignore clicks on control buttons
+  const target = e.target as HTMLElement
+  if (target.closest('.titlebar-controls')) return
+  window.api.maximizeWindow()
+})
+
+// Debounced terminal fit & resize for smooth performance and lower CPU
+let resizeTimeout: number | null = null
 window.addEventListener('resize', () => {
-  fitAddon.fit()
-  window.api.resizeTerminal(term.cols, term.rows)
+  if (resizeTimeout) cancelAnimationFrame(resizeTimeout)
+  resizeTimeout = requestAnimationFrame(() => {
+    fitAddon.fit()
+    window.api.resizeTerminal(term.cols, term.rows)
+    resizeTimeout = null
+  })
 })
 
 // Window Controls
@@ -237,6 +253,14 @@ window.addEventListener('keydown', async (e) => {
       term.paste(text)
     }
     return
+  }
+})
+
+// Copy on selection change automatically
+term.onSelectionChange(() => {
+  const selection = term.getSelection()
+  if (selection && selection.trim().length > 0) {
+    navigator.clipboard.writeText(selection).catch(() => {})
   }
 })
 

@@ -18,7 +18,9 @@ vallenterminal/.vite/
 *.local
 *.env
 *.token
-.vallenatrix/
+.vallenatrix/config.json
+.vallenatrix/memories/
+.vallenatrix/sessions/
 refrensi*/
 update.bat
 update.sh

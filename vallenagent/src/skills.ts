@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, existsSync } from 'fs'
-import { join, basename, relative, dirname } from 'path'
+import { join, basename, relative, dirname, sep } from 'path'
 import matter from 'gray-matter'
 
 export interface SkillMetadata {
@@ -91,7 +91,7 @@ function loadSkillFile(filePath: string, rootDir: string): Skill | null {
   let category = data.category
   if (!category) {
     const rel = relative(rootDir, dirname(filePath))
-    const parts = rel.split(require('path').sep).filter(Boolean)
+    const parts = rel.split(sep).filter(Boolean)
     if (parts.length > 1) {
       category = parts[0]
     } else {

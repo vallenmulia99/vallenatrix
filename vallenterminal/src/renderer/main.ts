@@ -115,6 +115,17 @@ requestAnimationFrame(() => {
 let isDirectPtyMode = false
 let hasEnteredPty = false
 
+function updateStatus(
+  text: string,
+  type: 'idle' | 'thinking' | 'tool' | 'tool_end' | 'done' | 'boot' | 'pty' = 'idle',
+  detail?: string
+): void {
+  statusProgress.textContent = text
+  if (pet.isEnabled()) {
+    pet.setAgentStatus(text, type, detail)
+  }
+}
+
 function togglePtyMode(force?: boolean): void {
   isDirectPtyMode = force !== undefined ? force : !isDirectPtyMode
   const statusSymbol = document.querySelector('.status-symbol') as HTMLElement
@@ -124,7 +135,7 @@ function togglePtyMode(force?: boolean): void {
       statusSymbol.textContent = '💻'
       statusSymbol.title = 'Direct PTY Shell Active (Ctrl+` to switch back to AI)'
     }
-    statusProgress.textContent = 'PTY Shell Active'
+    updateStatus('PTY Shell Active', 'pty')
     term.focus()
     if (!hasEnteredPty) {
       hasEnteredPty = true
@@ -136,7 +147,7 @@ function togglePtyMode(force?: boolean): void {
       statusSymbol.textContent = '☤'
       statusSymbol.title = 'Vallenatrix AI Agent Active (Ctrl+` to switch to PTY)'
     }
-    statusProgress.textContent = 'Ready'
+    updateStatus('Ready', 'idle')
     chatInput.focus()
   }
 }
@@ -680,12 +691,13 @@ async function sendChatMessage() {
   
   // Display user message in terminal
   term.writeln(`\r\n\x1b[32m[You]\x1b[0m \x1b[37m${message}\x1b[0m`)
-  statusProgress.textContent = 'Agent thinking...'
+  updateStatus('Agent thinking...', 'thinking')
 
   try {
     const res = await window.api.chatAgent(message, selectedModel)
     if (res.error) {
       term.writeln(`\x1b[31m[Agent Error]\x1b[0m ${res.error}`)
+      updateStatus('Ready', 'idle')
     } else if (res.response) {
       const boxWidth = Math.max(60, Math.min(term.cols - 2, 80))
       const topFill = Math.max(0, boxWidth - 18)
@@ -707,12 +719,13 @@ async function sendChatMessage() {
       if (res.telemetry) {
         updateStatusBarMetrics(res.telemetry)
       }
+      updateStatus('Ready', 'done')
     }
   } catch (err: any) {
     term.writeln(`\x1b[31m[Agent Error]\x1b[0m ${err.message || 'Failed to chat with agent'}`)
+    updateStatus('Ready', 'idle')
   }
 
-  statusProgress.textContent = 'Ready'
   chatInput.focus()
 }
 
@@ -755,17 +768,18 @@ function updateStatusBarMetrics(meta?: {
 // Listen for live agent tool execution & thinking updates
 window.api.onAgentStatus((status) => {
   if (status.type === 'thinking') {
-    statusProgress.textContent = status.message
+    updateStatus(status.message, 'thinking')
   } else if (status.type === 'tool_start') {
     term.writeln(status.message)
-    statusProgress.textContent = 'Agent running tool...'
+    updateStatus('Agent running tool...', 'tool', status.message)
   } else if (status.type === 'tool_end') {
     for (const line of status.message.split('\n')) {
       term.writeln(line)
     }
-    statusProgress.textContent = 'Tool completed'
+    updateStatus('Tool completed', 'tool_end', status.message)
   } else if (status.type === 'review_complete') {
     term.writeln(`\x1b[36m${status.message}\x1b[0m`)
+    updateStatus('Review completed', 'tool_end')
   }
 })
 
@@ -930,7 +944,7 @@ async function init(): Promise<void> {
 
   // Real startup loading sequence & health checks
   try {
-    statusProgress.textContent = 'Booting Vallenatrix...'
+    updateStatus('Booting Vallenatrix...', 'boot')
     const payload = await window.api.getBanner()
 
     term.clear()
@@ -953,7 +967,7 @@ async function init(): Promise<void> {
         term.writeln(payload.diagHeader)
 
         for (const item of payload.healthChecks) {
-          statusProgress.textContent = `Verifying ${item.title}...`
+          updateStatus(`Verifying ${item.title}...`, 'tool', item.title)
           term.writeln(item.formattedRow)
           await new Promise((r) => setTimeout(r, 60))
         }
@@ -971,11 +985,11 @@ async function init(): Promise<void> {
       }
     }
 
-    statusProgress.textContent = 'Ready'
+    updateStatus('Ready', 'idle')
     chatInput.focus()
   } catch (err) {
     console.error('Failed to load startup banner & diagnostics:', err)
-    statusProgress.textContent = 'Ready'
+    updateStatus('Ready', 'idle')
     chatInput.focus()
   }
 }

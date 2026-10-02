@@ -101,6 +101,8 @@ export class TerminalPet {
   private loopId: number | null = null
   private enabled: boolean = true
   private scale: number = 1.0
+  private isAgentWorking: boolean = false
+  private currentAgentStatus: string = ''
 
   constructor(parent: HTMLElement) {
     this.parent = parent
@@ -181,7 +183,7 @@ export class TerminalPet {
   }
 
   public onUserActivity(): void {
-    if (!this.enabled) return
+    if (!this.enabled || this.isAgentWorking) return
     // Wake up if sleeping and cheer user
     if (this.state === 'sleeping') {
       this.state = 'idle'
@@ -191,15 +193,32 @@ export class TerminalPet {
     }
   }
 
-  public meow(): void {
-    if (!this.enabled) return
-    // Cute hop animation
+  public wakeUp(): void {
+    if (this.state === 'sleeping' || this.state === 'idle') {
+      this.state = 'walking'
+      this.stateTimer = 0
+    }
+  }
+
+  public hop(): void {
     this.petEl.style.transition = 'transform 0.15s ease-out'
     this.updatePosition(-12)
     setTimeout(() => {
       this.petEl.style.transition = 'none'
       this.updatePosition(0)
     }, 150)
+  }
+
+  public meow(): void {
+    if (!this.enabled) return
+    this.hop()
+
+    if (this.isAgentWorking) {
+      const busyMeows = ['lagi mikir! ⚡', 'sabar ya! ✨', 'otw kelar! 🚀', 'kerja keras! 💪']
+      const msg = busyMeows[Math.floor(Math.random() * busyMeows.length)]
+      this.showBubble(msg, false, 'active-task', 1500)
+      return
+    }
 
     const randomMsg = MEOWS[Math.floor(Math.random() * MEOWS.length)]
     this.showBubble(randomMsg)
@@ -208,14 +227,83 @@ export class TerminalPet {
     this.spriteEl.innerHTML = FRAMES.sit
   }
 
-  private showBubble(text: string): void {
-    if (this.bubbleTimeout) clearTimeout(this.bubbleTimeout)
-    this.bubbleEl.textContent = text
-    this.bubbleEl.classList.add('show')
-    this.bubbleTimeout = window.setTimeout(() => {
-      this.bubbleEl.classList.remove('show')
+  public showBubble(
+    text: string,
+    persistent: boolean = false,
+    className: string = '',
+    duration: number = 1800
+  ): void {
+    if (this.bubbleTimeout) {
+      clearTimeout(this.bubbleTimeout)
       this.bubbleTimeout = null
-    }, 1800)
+    }
+    this.bubbleEl.textContent = text
+    this.bubbleEl.className = `pet-bubble show ${className}`.trim()
+
+    if (!persistent) {
+      this.bubbleTimeout = window.setTimeout(() => {
+        this.bubbleEl.classList.remove('show')
+        this.bubbleTimeout = null
+      }, duration)
+    }
+  }
+
+  public setAgentStatus(
+    statusText: string,
+    type: 'idle' | 'thinking' | 'tool' | 'tool_end' | 'done' | 'boot' | 'pty' = 'idle',
+    detail?: string
+  ): void {
+    if (!this.enabled) return
+    this.currentAgentStatus = statusText
+
+    if (type === 'thinking') {
+      this.isAgentWorking = true
+      this.wakeUp()
+      this.showBubble('💭 Thinking...', true, 'active-task')
+    } else if (type === 'tool') {
+      this.isAgentWorking = true
+      this.wakeUp()
+      const toolLabel = this.formatToolLabel(detail || statusText)
+      this.showBubble(toolLabel, true, 'active-task')
+    } else if (type === 'tool_end') {
+      this.wakeUp()
+      this.showBubble('✔ Done!', false, 'active-task', 1200)
+    } else if (type === 'done') {
+      this.isAgentWorking = false
+      this.hop()
+      this.showBubble('✨ Selesai!', false, 'done-task', 2200)
+    } else if (type === 'boot') {
+      this.wakeUp()
+      this.showBubble(`🚀 ${statusText}`, false, 'boot-task', 1800)
+    } else if (type === 'pty') {
+      this.wakeUp()
+      this.showBubble('💻 Shell PTY', false, 'pty-task', 2000)
+    } else if (type === 'idle') {
+      if (this.isAgentWorking) {
+        this.isAgentWorking = false
+        this.showBubble('🐾 Ready!', false, '', 1800)
+      }
+    }
+  }
+
+  private formatToolLabel(raw: string): string {
+    const text = raw.replace(/\x1b\[[0-9;]*m/g, '').trim()
+    if (text.includes('terminal')) return '💻 terminal'
+    if (text.includes('write_file')) return '✍️ write_file'
+    if (text.includes('read_file')) return '📖 read_file'
+    if (text.includes('patch')) return '🔧 patch'
+    if (text.includes('search_files')) return '🔎 search_files'
+    if (text.includes('skill_view')) return '📚 skill_view'
+    if (text.includes('execute_code')) return '🐍 python'
+    if (text.includes('web_search')) return '🌐 web_search'
+    if (text.includes('web_extract')) return '📄 web_extract'
+    if (text.includes('delegate_task')) return '🤖 subagent'
+    if (text.includes('clarify')) return '❓ clarify'
+    if (text.includes('memory')) return '🧠 memory'
+    if (text.includes('todo')) return '📋 todo'
+    const clean = text.replace(/^[┊\s💻✍️📖📚🔧🔎🐍🌐📄🤖❓🧠📋]+/, '').trim()
+    const short = clean.slice(0, 18)
+    return short ? `⚙️ ${short}` : '⚙️ Working...'
   }
 
   private start(): void {
@@ -286,6 +374,7 @@ export class TerminalPet {
   }
 
   private maybeRest(): void {
+    if (this.isAgentWorking) return // Never sleep or stop when agent is working
     if (Math.random() < 0.45) {
       this.state = 'idle'
       this.stateTimer = 20 + Math.floor(Math.random() * 25) // sit for 2.5 - 5 seconds
@@ -295,8 +384,9 @@ export class TerminalPet {
 
   private updatePosition(offsetY: number = 0): void {
     const dir = this.direction === 1 ? 1 : -1
-    const sx = dir * this.scale
-    const sy = this.scale
-    this.petEl.style.transform = `translate3d(${Math.round(this.posX)}px, ${offsetY}px, 0) scale(${sx}, ${sy})`
+    // Scale pet container without negative flip
+    this.petEl.style.transform = `translate3d(${Math.round(this.posX)}px, ${offsetY}px, 0) scale(${this.scale})`
+    // Flip ONLY the sprite element so text in bubble is never backwards/mirrored!
+    this.spriteEl.style.transform = `scaleX(${dir})`
   }
 }

@@ -422,11 +422,62 @@ function setupIpc(): void {
         return { response: lines.join('\n') }
       }
 
+      if (trimmed === '/gamedev') {
+        const skills = agent.skillLoader.list()
+        const gameSkills = skills.filter((s: any) => {
+          const cat = s.metadata.category || ''
+          return cat.includes('game') || cat.includes('godot') || cat.includes('unity') || 
+                 cat.includes('unreal') || cat.includes('roblox') || cat.includes('blender')
+        })
+        
+        if (gameSkills.length === 0) {
+          return {
+            response: `\x1b[31m[Game Dev Mode]\x1b[0m\nNo game development skills found.\nInstall game dev skills to ~/.vallenatrix/skills/\n\nSupported engines: Unity, Godot, Unreal, Roblox, Blender`
+          }
+        }
+        
+        agent.setGameDevMode(true)
+        const lines = [
+          '\x1b[32m✔ Game Dev Mode Activated!\x1b[0m',
+          '\x1b[36m╭─ 🎮 Game Development Boost ───────────────────────────────────╮\x1b[0m',
+          `  Loaded Skills    : \x1b[33m${gameSkills.length} game dev skills\x1b[0m`,
+          `  Active Model     : \x1b[35m${agent.provider.model}\x1b[0m`,
+          '',
+          '  \x1b[36mFocus Areas:\x1b[0m',
+          '  • Unity C# architecture & editor tools',
+          '  • Godot GDScript gameplay & multiplayer',
+          '  • Unreal C++ systems & Blueprints',
+          '  • Roblox Lua scripting & experiences',
+          '  • Blender Python asset pipeline',
+          '  • Game design patterns & optimization',
+          '',
+          '  \x1b[33mAI agent will prioritize:\x1b[0m',
+          '  ✓ Game engine patterns & best practices',
+          '  ✓ Asset workflow automation',
+          '  ✓ Performance optimization (60+ FPS)',
+          '  ✓ Shader programming & visual effects',
+          '  ✓ Multiplayer architecture',
+          '\x1b[36m╰──────────────────────────────────────────────────────────────╯\x1b[0m',
+          '',
+          '\x1b[2mUse /gamedev off to deactivate game dev mode\x1b[0m'
+        ]
+        return { response: lines.join('\n'), gameDevMode: true }
+      }
+
+      if (trimmed === '/gamedev off') {
+        agent.setGameDevMode(false)
+        return {
+          response: `\x1b[33m✔ Game Dev Mode Deactivated\x1b[0m\nReturned to general-purpose agent mode.`,
+          gameDevMode: false
+        }
+      }
+
       if (trimmed === '/help') {
         return {
           response: `\x1b[36m[Vallenatrix Autonomous AI Terminal Commands]\x1b[0m
 /model <name>  - Switch active AI model (e.g. /model ag/gemini-3.8-flash-medium)
 /token <key>   - Connect and persist 9router API key
+/gamedev       - Activate game development boost mode (Unity/Godot/Unreal/Roblox/Blender)
 /plan [task]   - Write markdown implementation plan (.vallenatrix/plans/) without executing
 /plans         - List saved implementation plans in .vallenatrix/plans/
 /tools         - Inspect registered tools across all toolsets

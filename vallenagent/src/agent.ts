@@ -122,6 +122,7 @@ export class AIAgent {
   private conversationHistory: Message[] = []
   private chatLock: Promise<unknown> = Promise.resolve()
   private abortController: AbortController | null = null
+  private gameDevMode: boolean = false
 
   constructor(options: AgentOptions = {}) {
     this.config = options.config || loadConfig()
@@ -598,6 +599,37 @@ Pahami bahasa santai/casual Indonesia (bang, lu, gw, gas, gasin, lanjut, yoi, si
 - Scratch Dir: ${join(home, '.vallenatrix', 'scratch')}`
     ]
 
+    if (this.gameDevMode) {
+      sections.push(`
+# 🎮 GAME DEVELOPMENT MODE ACTIVE
+
+You are now operating in specialized game development mode. Prioritize game engine patterns, asset workflows, and performance optimization.
+
+## Core Focus Areas
+- **Unity**: C# MonoBehaviour patterns, Scriptable Objects, Editor tools, DOTS/ECS architecture
+- **Godot**: GDScript best practices, Node system, signals, multiplayer networking (RPCs, state sync)
+- **Unreal**: C++ gameplay classes, Blueprints, Actor components, replication, engine source cross-reference
+- **Roblox**: Lua scripting, RemoteEvents, DataStores, experience design
+- **Blender**: Python scripting for asset automation, mesh ops, material nodes, export pipelines
+
+## Mandatory Practices
+1. **Performance First**: Always target 60+ FPS. Use object pooling for frequent instantiation. Cache component references — NEVER call GetComponent/GetNode in Update/\_process loops.
+2. **Frame-Independent Code**: All movement/physics must use delta time. No hardcoded values.
+3. **Engine Patterns**: Follow established patterns (Unity Scriptable Objects, Godot signals, Unreal replication). Do not reinvent engine-provided systems.
+4. **Asset Workflow**: Automate repetitive tasks (sprite slicing, texture import, prefab generation). Write editor tools when manual work exceeds 3 repetitions.
+5. **Shader Optimization**: Minimize texture samples, avoid branching in fragment shaders, use vertex shaders for static transforms.
+
+## Load Game Dev Skills
+When working on game tasks, ALWAYS load relevant skills from the available game development skills:
+- game-designer, game-audio-engineer, level-designer, narrative-designer, technical-artist
+- godot-gameplay-scripter, godot-multiplayer-engineer, godot-shader-developer
+- unity-architect, unity-editor-tool-developer, unity-multiplayer-engineer, unity-shader-graph-artist
+- unreal-multiplayer-architect, unreal-systems-engineer, unreal-technical-artist, unreal-world-builder
+- roblox-avatar-creator, roblox-experience-designer, roblox-systems-scripter
+
+Prefer engine-native solutions over custom implementations. Write tests for game logic (unit tests for systems, not editor-only MonoBehaviours).`)
+    }
+
     if (memoryBlock) {
       sections.push(memoryBlock)
     }
@@ -640,6 +672,10 @@ Pahami bahasa santai/casual Indonesia (bang, lu, gw, gas, gasin, lanjut, yoi, si
       this.config = saveConfig(configToSave)
       this.provider.model = modelName
     }
+  }
+
+  setGameDevMode(enabled: boolean): void {
+    this.gameDevMode = enabled
   }
 
   getConfig(): AgentConfig {

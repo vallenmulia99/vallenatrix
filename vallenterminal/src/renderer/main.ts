@@ -954,6 +954,8 @@ async function init(): Promise<void> {
         term.writeln(line)
       }
     } else if (payload) {
+      if (payload.model) updateSelectedModelOption(payload.model)
+
       // 1. Render ASCII banner
       if (payload.asciiBanner) {
         for (const line of payload.asciiBanner.split('\n')) {

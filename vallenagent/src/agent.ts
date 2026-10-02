@@ -618,8 +618,6 @@ Pahami bahasa santai/casual Indonesia (bang, lu, gw, gas, gasin, lanjut, yoi, si
   }
 
   setModel(modelName: string): void {
-    if (this.provider.model === modelName) return
-    
     const active = this.config.providers.active
     const provider = this.config.providers[active]
     if (provider && typeof provider === 'object') {

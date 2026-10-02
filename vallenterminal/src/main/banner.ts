@@ -26,6 +26,7 @@ export interface StartupPayload {
   diagFooter: string
   healthChecks: HealthCheckItem[]
   guideBox: string[]
+  model: string
 }
 
 const INNER = 61
@@ -242,6 +243,7 @@ export async function getStartupPayload(agentInstance?: any): Promise<StartupPay
     diagHeader: borderTop('System Diagnostics & Health Check'),
     diagFooter: borderBot(),
     healthChecks,
-    guideBox
+    guideBox,
+    model: modelName
   }
 }

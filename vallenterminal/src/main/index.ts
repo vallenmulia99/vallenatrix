@@ -405,12 +405,31 @@ function setupIpc(): void {
         }
       }
 
+      if (trimmed === '/plans') {
+        const cwd = agent.config.terminal?.cwd || process.cwd()
+        const vallenagentDist = join(__dirname, '../../../vallenagent/dist/index.js')
+        const { listPlans } = require(vallenagentDist)
+        const plans = listPlans(cwd)
+        if (plans.length === 0) {
+          return { response: '\x1b[33mNo plans found in .vallenatrix/plans/\x1b[0m\nUse /plan <task> to create an implementation plan.' }
+        }
+        const lines = ['\x1b[36m[Implementation Plans (.vallenatrix/plans/)]\x1b[0m']
+        for (const p of plans.slice(0, 15)) {
+          const dateStr = p.createdAt ? new Date(p.createdAt).toISOString().replace('T', ' ').slice(0, 16) : ''
+          lines.push(`• \x1b[32m${p.filename}\x1b[0m \x1b[2m(${dateStr} | ${p.size} B)\x1b[0m`)
+        }
+        lines.push(`\n\x1b[33mTip:\x1b[0m Use /plan <task> to create a new plan or inspect files with read_file.`)
+        return { response: lines.join('\n') }
+      }
+
       if (trimmed === '/help') {
         return {
           response: `\x1b[36m[Vallenatrix Autonomous AI Terminal Commands]\x1b[0m
 /model <name>  - Switch active AI model (e.g. /model ag/gemini-3.8-flash-medium)
 /token <key>   - Connect and persist 9router API key
-/tools         - Inspect 16 registered tools across 12 toolsets
+/plan [task]   - Write markdown implementation plan (.vallenatrix/plans/) without executing
+/plans         - List saved implementation plans in .vallenatrix/plans/
+/tools         - Inspect registered tools across all toolsets
 /skills        - Manage modular skills (search, install, toggle)
 /themes        - List available UI color themes
 /theme <name>  - Switch UI theme instantly
@@ -425,6 +444,18 @@ function setupIpc(): void {
 /clear         - Clear terminal display
 /help          - Show this command reference`
         }
+      }
+
+      let effectiveMessage = message
+      if (trimmed.startsWith('/plan')) {
+        const task = trimmed.length > 5 ? trimmed.slice(5).trim() : ''
+        const vallenagentDist = join(__dirname, '../../../vallenagent/dist/index.js')
+        const { buildPlanPrompt } = require(vallenagentDist)
+        effectiveMessage = buildPlanPrompt(task)
+        mainWindow?.webContents.send(IPC_CHANNELS.AGENT_STATUS, {
+          type: 'thinking',
+          message: task ? `📋 Planning: ${task}` : '📋 Planning from conversation context...'
+        })
       }
 
       if (userModel) {
@@ -460,7 +491,7 @@ function setupIpc(): void {
         }
       }
 
-      const res = await agent.chat(message, callbacks)
+      const res = await agent.chat(effectiveMessage, callbacks)
       return {
         response: res.response,
         telemetry: {

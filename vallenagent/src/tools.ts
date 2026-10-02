@@ -26,6 +26,12 @@ export interface ToolContext {
   sessionId?: string
   taskId?: string
   workingDir?: string
+  isSubagent?: boolean
+  stores?: {
+    memory?: any
+    todo?: any
+    skillLoader?: any
+  }
 }
 
 export interface ToolRegistration {

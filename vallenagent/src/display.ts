@@ -43,6 +43,7 @@ export function getToolEmoji(name: string): string {
     case 'execute_code': return '⚙️ '
     case 'browser_exec': return '🌐'
     case 'image_generate': return '🎨'
+    case 'vision_analyze': return '👁️ '
     case 'clarify': return '❓'
     case 'memory': return '🧠'
     case 'todo_list': return '📝'
@@ -192,6 +193,13 @@ export function formatToolEnd(
     case 'image_generate': {
       verb = 'create'
       detail = truncateString(args.prompt || '', 40)
+      break
+    }
+    case 'vision_analyze': {
+      verb = 'vision'
+      const img = cutePath(args.image_url || '')
+      const q = truncateString(args.question || '', 30)
+      detail = `${img} "${q}"`
       break
     }
     case 'browser_exec': {

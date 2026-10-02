@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSy
 import { resolve, join, dirname, relative, isAbsolute } from 'path'
 import { exec, execFile, spawn } from 'child_process'
 import { homedir } from 'os'
+import { getVallenatrixHome, loadConfig, getActiveProvider } from './config'
 import { registry, ToolSchema } from './tools'
 import { SkillLoader } from './skills'
 import { MemoryStore } from './memory'
@@ -406,6 +407,15 @@ export function registerBuiltinTools(
         require('fs').closeSync(fd)
         
         if (buffer.slice(0, bytesRead).includes(0)) {
+          const dotIdx = fullPath.lastIndexOf('.')
+          const ext = dotIdx !== -1 ? fullPath.slice(dotIdx).toLowerCase() : ''
+          const isImg = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.bmp'].includes(ext)
+          if (isImg) {
+            return JSON.stringify({
+              error: `Image file detected (${ext}): ${rawPath}. Cannot read image bytes with read_file.`,
+              hint: `Use vision_analyze with image_url="${rawPath}" and question="..." to inspect this image.`
+            })
+          }
           return JSON.stringify({ error: `Binary file detected: ${rawPath}` })
         }
       } catch (err: any) {
@@ -656,11 +666,18 @@ export function registerBuiltinTools(
             if (entry.isDirectory()) {
               searchDirContents(subPath)
             } else if (entry.isFile()) {
+              const skipExts = ['.png', '.jpg', '.jpeg', '.gif', '.mp4', '.mkv', '.zip', '.tar', '.gz', '.bin', '.exe', '.so', '.dylib', '.iso', '.pdf', '.woff', '.woff2', '.ttf', '.pyc', '.wasm']
+              const dotIdx = entry.name.lastIndexOf('.')
+              const ext = dotIdx !== -1 ? entry.name.slice(dotIdx).toLowerCase() : ''
+              if (skipExts.includes(ext)) continue
+
               if (args.file_glob) {
                 const globReg = globToRegex(String(args.file_glob))
                 if (!globReg.test(entry.name)) continue
               }
               try {
+                const st = statSync(subPath)
+                if (st.size > 2 * 1024 * 1024) continue // Skip files > 2MB in recursive content search
                 const fileText = readFileSync(subPath, 'utf-8')
                 const lines = fileText.split('\n')
                 for (let idx = 0; idx < lines.length; idx++) {
@@ -744,9 +761,25 @@ export function registerBuiltinTools(
         let stdout = ''
         let stderr = ''
         let killed = false
+        const MAX_OUTPUT_BYTES = 10 * 1024 * 1024 // 10MB in-memory cap to prevent OOM
+        let exceededBufferCap = false
 
-        proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
-        proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+        proc.stdout.on('data', (chunk: Buffer) => {
+          if (stdout.length < MAX_OUTPUT_BYTES) {
+            stdout += chunk.toString()
+          } else if (!exceededBufferCap) {
+            exceededBufferCap = true
+            stdout += '\n[Output stream exceeded 10MB buffer limit, killing process...]'
+            try {
+              if (proc.pid) process.kill(-proc.pid, 'SIGKILL')
+            } catch {}
+          }
+        })
+        proc.stderr.on('data', (chunk: Buffer) => {
+          if (stderr.length < MAX_OUTPUT_BYTES) {
+            stderr += chunk.toString()
+          }
+        })
 
         const timeoutHandle = setTimeout(() => {
           killed = true
@@ -863,8 +896,14 @@ export function registerBuiltinTools(
         const res = await fetch(url, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-          }
+          },
+          signal: AbortSignal.timeout(15000)
         })
+        if (!res.ok) {
+          return JSON.stringify({
+            error: `Search request failed with HTTP ${res.status}: ${res.statusText}`
+          })
+        }
         const html = await res.text()
 
         const results: Array<{ title: string; url: string; description: string }> = []
@@ -957,6 +996,17 @@ export function registerBuiltinTools(
             signal: controller.signal
           })
           clearTimeout(timeoutId)
+
+          if (!res.ok) {
+            results.push({
+              url: targetUrl,
+              title: targetUrl,
+              content: '',
+              error: `HTTP ${res.status}: ${res.statusText}`
+            })
+            continue
+          }
+
           const rawHtml = await res.text()
 
           const titleMatch = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
@@ -1078,11 +1128,12 @@ export function registerBuiltinTools(
     name: 'memory',
     schema: memorySchema,
     toolset: 'memory',
-    handler: async (args) => {
+    handler: async (args, context) => {
+      const mem = context?.stores?.memory || memory
       const target = (args.target || 'memory') as 'memory' | 'user'
 
       if (Array.isArray(args.operations) && args.operations.length > 0) {
-        const res = memory.batch(args.operations, target)
+        const res = mem.batch(args.operations, target)
         return JSON.stringify(res)
       }
 
@@ -1091,11 +1142,11 @@ export function registerBuiltinTools(
       const oldText = String(args.old_text || '')
 
       if (action === 'add') {
-        return JSON.stringify(memory.add(target, content))
+        return JSON.stringify(mem.add(target, content))
       } else if (action === 'replace') {
-        return JSON.stringify(memory.replace(target, oldText, content))
+        return JSON.stringify(mem.replace(target, oldText, content))
       } else if (action === 'remove') {
-        return JSON.stringify(memory.remove(target, oldText))
+        return JSON.stringify(mem.remove(target, oldText))
       }
 
       return JSON.stringify({ error: `Unknown memory action: ${action}` })
@@ -1131,12 +1182,13 @@ export function registerBuiltinTools(
     name: 'todo_list',
     schema: todoListSchema,
     toolset: 'todo',
-    handler: async (args) => {
+    handler: async (args, context) => {
+      const td = context?.stores?.todo || todo
       if (Array.isArray(args.todos)) {
-        const updated = todo.write(args.todos, isTruthy(args.merge))
-        return JSON.stringify({ todos: updated, active_count: updated.filter(t => t.status !== 'completed').length })
+        const updated = td.write(args.todos, isTruthy(args.merge))
+        return JSON.stringify({ todos: updated, active_count: updated.filter((t: any) => t.status !== 'completed').length })
       }
-      return JSON.stringify({ todos: todo.read() })
+      return JSON.stringify({ todos: td.read() })
     }
   })
 
@@ -1163,7 +1215,7 @@ export function registerBuiltinTools(
       const prompt = String(args.prompt || '').trim()
       if (!prompt) return JSON.stringify({ error: 'Prompt is required' })
 
-      const outDir = join(homedir(), '.vallenatrix', 'images')
+      const outDir = join(getVallenatrixHome(), 'images')
       mkdirSync(outDir, { recursive: true })
       const targetFile = args.output_path
         ? resolve(context.workingDir || process.cwd(), String(args.output_path))
@@ -1181,18 +1233,204 @@ export function registerBuiltinTools(
           throw new Error(`Pollinations HTTP error: ${res.status}`)
         }
         const buf = Buffer.from(await res.arrayBuffer())
-        mkdirSync(dirname(targetFile), { recursive: true })
-        writeFileSync(targetFile, buf)
+
+        // Detect real image format from magic bytes
+        let realExt = 'png'
+        if (buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xD8) {
+          realExt = 'jpg'
+        } else if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) {
+          realExt = 'png'
+        } else if (buf.length >= 4 && buf.slice(0, 4).toString() === 'RIFF') {
+          realExt = 'webp'
+        }
+
+        let finalPath = targetFile
+        if (realExt === 'jpg' && finalPath.toLowerCase().endsWith('.png')) {
+          finalPath = finalPath.replace(/\.png$/i, '.jpg')
+        } else if (realExt === 'png' && (finalPath.toLowerCase().endsWith('.jpg') || finalPath.toLowerCase().endsWith('.jpeg'))) {
+          finalPath = finalPath.replace(/\.jpe?g$/i, '.png')
+        }
+
+        mkdirSync(dirname(finalPath), { recursive: true })
+        writeFileSync(finalPath, buf)
 
         return JSON.stringify({
           success: true,
-          path: targetFile,
+          path: finalPath,
           bytes: buf.length,
           url: pollUrl,
-          message: `Image generated and saved to ${targetFile}`
+          message: `Image generated and saved to ${finalPath}`
         })
       } catch (err: any) {
         return JSON.stringify({ error: err.message || 'Image generation failed' })
+      }
+    }
+  })
+
+  // 13. vision_analyze
+  const visionAnalyzeSchema: ToolSchema = {
+    name: 'vision_analyze',
+    description: 'Analyze images and photos using AI vision. Supports local image paths (PNG, JPEG, WebP, GIF) or web URLs. Call it any time the user references an image or photo — then answer from what you see.',
+    parameters: {
+      type: 'object',
+      properties: {
+        image_url: { type: 'string', description: 'Image URL (http/https), local file path, or data: URL to analyze' },
+        question: { type: 'string', description: 'Your question or request about the image (e.g. describe contents, read text, identify errors)' }
+      },
+      required: ['image_url', 'question']
+    }
+  }
+
+  registry.register({
+    name: 'vision_analyze',
+    schema: visionAnalyzeSchema,
+    toolset: 'vision',
+    handler: async (args, context) => {
+      const rawInput = String(args.image_url || '').trim()
+      const question = String(args.question || 'Describe this image in detail and answer any user questions.').trim()
+
+      if (!rawInput) {
+        return JSON.stringify({ error: 'image_url parameter is required' })
+      }
+
+      let dataUrl = ''
+
+      if (rawInput.startsWith('data:image/')) {
+        dataUrl = rawInput
+      } else if (rawInput.startsWith('http://') || rawInput.startsWith('https://')) {
+        try {
+          const res = await fetch(rawInput, { signal: AbortSignal.timeout(20000) })
+          if (!res.ok) {
+            return JSON.stringify({ error: `Failed to fetch image URL: HTTP ${res.status} ${res.statusText}` })
+          }
+          const buf = Buffer.from(await res.arrayBuffer())
+          let mime = res.headers.get('content-type') || 'image/png'
+          if (buf[0] === 0xFF && buf[1] === 0xD8) mime = 'image/jpeg'
+          else if (buf[0] === 0x89 && buf[1] === 0x50) mime = 'image/png'
+          else if (buf.slice(0, 4).toString() === 'RIFF') mime = 'image/webp'
+          dataUrl = `data:${mime};base64,${buf.toString('base64')}`
+        } catch (err: any) {
+          return JSON.stringify({ error: `Cannot fetch image URL: ${err.message}` })
+        }
+      } else {
+        // Local file
+        let filePath = rawInput
+        if (filePath.startsWith('~/')) {
+          filePath = join(homedir(), filePath.slice(2))
+        }
+        const fullPath = isAbsolute(filePath) ? filePath : resolve(context?.workingDir || process.cwd(), filePath)
+
+        if (!existsSync(fullPath)) {
+          return JSON.stringify({ error: `Image file not found: ${filePath}` })
+        }
+
+        try {
+          const st = statSync(fullPath)
+          if (!st.isFile()) {
+            return JSON.stringify({ error: `Not a regular file: ${filePath}` })
+          }
+          if (st.size > 20 * 1024 * 1024) {
+            return JSON.stringify({ error: `Image file too large: ${(st.size / 1024 / 1024).toFixed(1)} MB (max 20 MB)` })
+          }
+
+          const buf = readFileSync(fullPath)
+          let mime = 'image/png'
+          if (buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xD8) {
+            mime = 'image/jpeg'
+          } else if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) {
+            mime = 'image/png'
+          } else if (buf.length >= 4 && buf.slice(0, 4).toString() === 'RIFF') {
+            mime = 'image/webp'
+          } else if (buf.length >= 3 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) {
+            mime = 'image/gif'
+          } else if (fullPath.toLowerCase().endsWith('.svg')) {
+            mime = 'image/svg+xml'
+          }
+
+          dataUrl = `data:${mime};base64,${buf.toString('base64')}`
+        } catch (err: any) {
+          return JSON.stringify({ error: `Cannot read image file: ${err.message}` })
+        }
+      }
+
+      // Query vision model via active provider
+      try {
+        const cfg = loadConfig()
+        let providerCfg: { name: string; base_url: string; api_key: string; model: string }
+        try {
+          providerCfg = getActiveProvider(cfg) as any
+        } catch {
+          providerCfg = {
+            name: '9router',
+            base_url: 'http://127.0.0.1:20128/v1',
+            api_key: '',
+            model: 'ag/gemini-3.8-flash-medium'
+          }
+        }
+        const baseURL = (providerCfg.base_url || 'http://127.0.0.1:20128/v1').replace('://localhost:', '://127.0.0.1:')
+        const model = providerCfg.model || 'ag/gemini-3.8-flash-medium'
+        const apiKey = providerCfg.api_key || ''
+
+        const visionResponse = await fetch(`${baseURL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {})
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: question },
+                  { type: 'image_url', image_url: { url: dataUrl } }
+                ]
+              }
+            ],
+            stream: false,
+            max_tokens: 2048
+          }),
+          signal: AbortSignal.timeout(60000)
+        })
+
+        if (!visionResponse.ok) {
+          const errBody = await visionResponse.text()
+          return JSON.stringify({
+            error: `Vision model HTTP error ${visionResponse.status}: ${errBody.slice(0, 300)}`
+          })
+        }
+
+        const rawText = await visionResponse.text()
+        let textAnswer = ''
+        if (rawText.trim().startsWith('data:')) {
+          for (const line of rawText.split('\n')) {
+            const trimmed = line.trim()
+            if (trimmed.startsWith('data:') && trimmed !== 'data: [DONE]') {
+              try {
+                const chunk = JSON.parse(trimmed.slice(5).trim())
+                const delta = chunk.choices?.[0]?.delta?.content || chunk.choices?.[0]?.message?.content || ''
+                textAnswer += delta
+              } catch {}
+            }
+          }
+        } else {
+          try {
+            const data = JSON.parse(rawText)
+            textAnswer = data.choices?.[0]?.message?.content || '(Vision model returned empty answer)'
+          } catch {
+            textAnswer = rawText
+          }
+        }
+
+        return JSON.stringify({
+          analysis: textAnswer.trim() || '(Vision model returned empty answer)',
+          image: rawInput
+        })
+      } catch (err: any) {
+        return JSON.stringify({
+          error: `Vision analysis request failed: ${err.message}`
+        })
       }
     }
   })
@@ -1264,14 +1502,23 @@ export function registerBuiltinTools(
     name: 'manage_connections',
     schema: manageConnectionsSchema,
     toolset: 'connections',
-    handler: async () => {
+    handler: async (_args, context) => {
+      const workdir = context?.workingDir || process.cwd()
+      let routerStatus = 'disconnected'
+      try {
+        const res = await fetch('http://127.0.0.1:20128/v1/models', { signal: AbortSignal.timeout(2000) })
+        routerStatus = res.ok ? 'connected' : `http_${res.status}`
+      } catch {
+        routerStatus = 'unreachable'
+      }
+
       return JSON.stringify({
         status: 'active',
         connectors: {
-          '9router': { status: 'unknown', endpoint: 'http://127.0.0.1:20128/v1', note: 'Status check not implemented' },
+          '9router': { status: routerStatus, endpoint: 'http://127.0.0.1:20128/v1' },
           'electron_terminal': { status: 'ready', window: 'active' },
           'filesystem': { status: 'writable', home: homedir() },
-          'git': { status: existsSync(join(process.cwd(), '.git')) ? 'git_repository' : 'none' }
+          'git': { status: existsSync(join(workdir, '.git')) ? 'git_repository' : 'none' }
         }
       })
     }
@@ -1306,7 +1553,10 @@ export function registerBuiltinTools(
       name: 'delegate_task',
       schema: delegateTaskSchema,
       toolset: 'delegation',
-      handler: async (args) => {
+      handler: async (args, context) => {
+        if (context?.isSubagent) {
+          return JSON.stringify({ error: 'Subagents cannot call delegate_task (delegation depth limit reached).' })
+        }
         const tasks = Array.isArray(args.tasks) ? args.tasks : []
         const summaries: Array<{ goal: string; summary: string }> = []
 
@@ -1348,7 +1598,7 @@ export function registerBuiltinTools(
     schema: skillsListSchema,
     toolset: 'skills',
     handler: async (args, context) => {
-      const loader = (context as any)?.agent?.skillLoader || skillLoader
+      const loader = context?.stores?.skillLoader || (context as any)?.agent?.skillLoader || skillLoader
       if (!loader) {
         return JSON.stringify([])
       }
@@ -1382,7 +1632,7 @@ export function registerBuiltinTools(
     schema: skillViewSchema,
     toolset: 'skills',
     handler: async (args, context) => {
-      const loader = (context as any)?.agent?.skillLoader || skillLoader
+      const loader = context?.stores?.skillLoader || (context as any)?.agent?.skillLoader || skillLoader
       const name = String(args.name || '').trim()
       if (!name) {
         return JSON.stringify({ error: 'Skill name is required' })
@@ -1465,9 +1715,9 @@ export function registerBuiltinTools(
       // Hermes-style atomic batch operations
       if (args.operations && Array.isArray(args.operations)) {
         const ops = args.operations
-        const loader = (context as any)?.agent?.skillLoader || skillLoader
+        const loader = context?.stores?.skillLoader || (context as any)?.agent?.skillLoader || skillLoader
         const localDir = join(process.cwd(), '.vallenatrix', 'skills')
-        const vallenHome = process.env.VALLENATRIX_HOME || join(homedir(), '.vallenatrix')
+        const vallenHome = getVallenatrixHome()
         const targetBaseDir = existsSync(localDir) ? localDir : join(vallenHome, 'skills')
 
         const results: any[] = []

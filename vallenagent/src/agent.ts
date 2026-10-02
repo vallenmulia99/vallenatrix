@@ -16,6 +16,7 @@ import { loadConfig, getActiveProvider, setProviderToken, saveConfig } from './c
 import { registerBuiltinTools } from './builtin_tools'
 import { formatToolStart, formatToolEnd } from './display'
 import { spawnBackgroundReview, type ReviewCallbacks } from './background_review'
+import { buildPlanPrompt } from './plan_prompt'
 
 export interface AgentOptions {
   config?: AgentConfig
@@ -244,8 +245,16 @@ export class AIAgent {
       }
     }
 
+    // /plan built-in: rewrite turn to plan-mode prompt (Hermes pattern)
+    let effectiveUserMessage = userMessage
+    const trimmedUserMsg = userMessage.trim()
+    if (trimmedUserMsg.startsWith('/plan') && !trimmedUserMsg.startsWith('[/plan')) {
+      const task = trimmedUserMsg.length > 5 ? trimmedUserMsg.slice(5).trim() : ''
+      effectiveUserMessage = buildPlanPrompt(task)
+    }
+
     // Append user message to active history
-    this.conversationHistory.push({ role: 'user', content: userMessage })
+    this.conversationHistory.push({ role: 'user', content: effectiveUserMessage })
 
     const messages = this.conversationHistory
 
@@ -281,7 +290,10 @@ export class AIAgent {
       }
 
       const messages = pruneOldToolResults(this.conversationHistory, 8)
-      const tools = registry.getOpenAISchemas()
+      let tools = registry.getOpenAISchemas()
+      if (this.isSubagent) {
+        tools = tools.filter(t => t.function.name !== 'delegate_task')
+      }
       const response = await this.provider.chat({
         model: this.provider.model,
         messages,
@@ -360,7 +372,13 @@ export class AIAgent {
 
           const context: ToolContext = {
             sessionId: this.sessionId,
-            workingDir: this.config.terminal?.cwd || process.cwd()
+            workingDir: this.config.terminal?.cwd || process.cwd(),
+            isSubagent: this.isSubagent,
+            stores: {
+              memory: this.memoryStore,
+              todo: this.todoStore,
+              skillLoader: this.skillLoader
+            }
           }
 
           let result = await registry.execute(toolName, toolArgs, context)
@@ -399,22 +417,10 @@ export class AIAgent {
       }
 
       // No tool calls - agent finished
-      const finalContent = assistantMessage.content || ''
-      
-      // Guard: empty or promise-only response
-      // BUG-20: Use local counter, don't persist nudge
-      let emptyRetries = 0
+      let finalContent = assistantMessage.content || ''
       if (!finalContent.trim()) {
-        if (emptyRetries < 2) {
-          emptyRetries++
-          // Skip - let it return empty and user can retry
-        }
-      }
-      
-      // Guard: promise pattern without tool calls
-      const promisePattern = /^(saya akan|i will|let me|gue bakal|i'll)\s/i
-      if (finalContent.trim().length < 100 && promisePattern.test(finalContent.trim())) {
-        // Skip nudge - just return promise response
+        finalContent = '(No content returned by model. Please retry or rephrase your prompt.)'
+        sanitizedAssistantMsg.content = finalContent
       }
 
       const latencySec = (Date.now() - startTime) / 1000
@@ -448,7 +454,7 @@ export class AIAgent {
       }
 
       return {
-        response: assistantMessage.content || '',
+        response: finalContent,
         iterations,
         totalTokens,
         toolCalls: toolCallCount,
@@ -461,14 +467,16 @@ export class AIAgent {
     }
 
     // Max iterations reached
-    try {
-      this.sessionManager.saveSession(
-        this.sessionId,
-        this.conversationHistory,
-        this.config.terminal?.cwd || process.cwd(),
-        this.provider.model
-      )
-    } catch {}
+    if (!this.isSubagent) {
+      try {
+        this.sessionManager.saveSession(
+          this.sessionId,
+          this.conversationHistory,
+          this.config.terminal?.cwd || process.cwd(),
+          this.provider.model
+        )
+      } catch {}
+    }
     
     return {
       response: `Max iterations reached (${this.maxIterations}). Work so far saved.`,

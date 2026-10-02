@@ -352,9 +352,17 @@ window.addEventListener('keydown', async (e) => {
     return
   }
 
-  // Paste disabled - terminal is read-only, use chat input instead
+  // Paste shortcut: in direct PTY mode send to shell, otherwise focus chat input
   if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
     e.preventDefault()
+    if (isDirectPtyMode) {
+      try {
+        const text = await navigator.clipboard.readText()
+        if (text) window.api.sendTerminalData(text)
+      } catch {}
+    } else {
+      chatInput.focus()
+    }
     return
   }
 })
@@ -662,12 +670,34 @@ async function sendChatMessage() {
   if (message.startsWith('/')) {
     term.writeln(`\r\n\x1b[36m> ${message}\x1b[0m`)
     try {
-      const res = await window.api.chatAgent(message)
+      const selectedModel = modelSelect.value
+      const res = await window.api.chatAgent(message, selectedModel)
       if (res.error) {
         term.writeln(`\x1b[31m[Command Error]\x1b[0m ${res.error}`)
       } else if (res.response) {
-        for (const line of res.response.split('\n')) {
-          term.writeln(line)
+        if (res.telemetry) {
+          const boxWidth = Math.max(60, Math.min(term.cols - 2, 80))
+          const topFill = Math.max(0, boxWidth - 18)
+          const topBar = `\x1b[36m╭─ ☤ Vallenatrix ${'─'.repeat(topFill)}╮\x1b[0m`
+          const botBar = `\x1b[36m╰${'─'.repeat(Math.max(0, boxWidth - 2))}╯\x1b[0m`
+          term.writeln(`\r\n${topBar}`)
+          
+          const agentColor = colorAgentResponse.value
+          const r = parseInt(agentColor.slice(1, 3), 16)
+          const g = parseInt(agentColor.slice(3, 5), 16)
+          const b = parseInt(agentColor.slice(5, 7), 16)
+          const colorCode = `\x1b[38;2;${r};${g};${b}m`
+          
+          for (const line of res.response.split('\n')) {
+            term.writeln(`${colorCode}${line}\x1b[0m`)
+          }
+          term.writeln(`${botBar}\r\n`)
+          updateStatusBarMetrics(res.telemetry)
+          updateStatus('Ready', 'done')
+        } else {
+          for (const line of res.response.split('\n')) {
+            term.writeln(line)
+          }
         }
       }
       if (res.updatedModel) {
@@ -790,6 +820,8 @@ const slashAutocomplete = document.getElementById('slash-autocomplete') as HTMLD
 const SLASH_COMMANDS = [
   { cmd: '/model', desc: 'Ganti atau cek model AI (via 9router)' },
   { cmd: '/token', desc: 'Koneksikan token API 9router' },
+  { cmd: '/plan', desc: 'Rencana implementasi markdown (.vallenatrix/plans/) tanpa eksekusi' },
+  { cmd: '/plans', desc: 'Lihat daftar rencana implementasi tersimpan' },
   { cmd: '/tools', desc: 'Lihat daftar 12 toolset & tools' },
   { cmd: '/skills', desc: 'Lihat daftar 59 loaded skills' },
   { cmd: '/themes', desc: 'Lihat daftar tema warna UI' },

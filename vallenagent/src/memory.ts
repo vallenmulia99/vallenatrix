@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
+import { getVallenatrixHome } from './config'
 
 export interface MemoryOperation {
   action: 'add' | 'replace' | 'remove'
@@ -16,7 +16,7 @@ export class MemoryStore {
   private userLimit: number = 1375
 
   constructor(customDir?: string) {
-    this.baseDir = customDir || join(homedir(), '.vallenatrix', 'memories')
+    this.baseDir = customDir || join(getVallenatrixHome(), 'memories')
     this.ensureDir()
   }
 
@@ -74,6 +74,11 @@ export class MemoryStore {
   }
 
   replace(target: 'memory' | 'user', oldText: string, newContent: string): Record<string, any> {
+    // BUG-13: Reject empty oldText
+    if (!oldText.trim()) {
+      return { error: 'old_text must not be empty for replace' }
+    }
+    
     const entries = this.readEntries(target)
     const matches = entries.filter(e => e.toLowerCase().includes(oldText.toLowerCase()))
     
@@ -90,6 +95,11 @@ export class MemoryStore {
   }
 
   remove(target: 'memory' | 'user', oldText: string): Record<string, any> {
+    // BUG-13: Reject empty oldText
+    if (!oldText.trim()) {
+      return { error: 'old_text must not be empty for remove' }
+    }
+    
     const entries = this.readEntries(target)
     const matches = entries.filter(e => e.toLowerCase().includes(oldText.toLowerCase()))
     
@@ -106,9 +116,10 @@ export class MemoryStore {
   }
 
   batch(operations: MemoryOperation[], defaultTarget: 'memory' | 'user' = 'memory'): Record<string, any> {
-    const memoryEntries = this.readEntries('memory')
-    const userEntries = this.readEntries('user')
+    const memoryEntries = [...this.readEntries('memory')]
+    const userEntries = [...this.readEntries('user')]
 
+    // BUG-13: Process all ops in memory, validate, then write atomically
     for (const op of operations) {
       const target = op.target || defaultTarget
       const list = target === 'user' ? userEntries : memoryEntries
@@ -118,12 +129,35 @@ export class MemoryStore {
       if (op.action === 'add') {
         if (content) list.push(content)
       } else if (op.action === 'replace') {
+        if (!oldText) {
+          return { error: 'old_text required for replace in batch' }
+        }
         const idx = list.findIndex(e => e.toLowerCase().includes(oldText.toLowerCase()))
-        if (idx !== -1 && content) list[idx] = content
+        if (idx === -1) {
+          return { error: `No entry matching '${oldText}' in ${target}` }
+        }
+        if (content) list[idx] = content
       } else if (op.action === 'remove') {
+        if (!oldText) {
+          return { error: 'old_text required for remove in batch' }
+        }
         const idx = list.findIndex(e => e.toLowerCase().includes(oldText.toLowerCase()))
-        if (idx !== -1) list.splice(idx, 1)
+        if (idx === -1) {
+          return { error: `No entry matching '${oldText}' in ${target}` }
+        }
+        list.splice(idx, 1)
       }
+    }
+
+    // Validate limits before writing
+    const memChars = memoryEntries.join('\n§\n').length
+    const userChars = userEntries.join('\n§\n').length
+    
+    if (memChars > this.memoryLimit) {
+      return { error: `Batch would exceed memory limit: ${memChars}/${this.memoryLimit} chars` }
+    }
+    if (userChars > this.userLimit) {
+      return { error: `Batch would exceed user limit: ${userChars}/${this.userLimit} chars` }
     }
 
     const resMem = this.writeEntries('memory', memoryEntries)

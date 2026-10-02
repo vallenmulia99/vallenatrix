@@ -68,6 +68,11 @@ export function fuzzyReplace(
   newString: string,
   replaceAll: boolean = false
 ): { content: string; diff: string; strategy: string } {
+  // BUG-03: Reject empty old_string
+  if (!oldString) {
+    throw new Error('old_string must not be empty')
+  }
+  
   if (oldString === newString) {
     throw new Error('No edit applied: old_string and new_string are identical.')
   }
@@ -112,7 +117,7 @@ export function fuzzyReplace(
   for (let i = 0; i <= contentLines.length - oldLines.length; i++) {
     const windowLines = contentLines.slice(i, i + oldLines.length)
     const windowWs = collapseWs(windowLines.join('\n'))
-    if (windowWs === oldWs || windowWs.includes(oldWs)) {
+    if (windowWs === oldWs) {
       matches3.push(windowLines.join('\n'))
     }
   }
@@ -199,9 +204,38 @@ export function fuzzyReplace(
         throw new Error(`Found ${count} unicode-normalized matches. Add more context to old_string or use replace_all=true`)
       }
     }
-    const idx = normContentUnicode.indexOf(normOldUnicode)
-    const matchedBlock = content.slice(idx, idx + oldString.length)
-    const updated = content.slice(0, idx) + newString + content.slice(idx + matchedBlock.length)
+    
+    // Build character-level mapping from normalized to original indices
+    const origIndex: number[] = []
+    let origPos = 0
+    for (let i = 0; i < content.length; i++) {
+      origIndex.push(origPos)
+      const char = content[i]
+      const normalized = normalizeUnicode(char)
+      origPos += normalized.length
+    }
+    origIndex.push(origPos) // end sentinel
+    
+    // Find match position in normalized content
+    const normIdx = normContentUnicode.indexOf(normOldUnicode)
+    
+    // Map back to original indices
+    let origStart = 0
+    let normCount = 0
+    for (let i = 0; i < content.length && normCount < normIdx; i++) {
+      origStart = i + 1
+      normCount += normalizeUnicode(content[i]).length
+    }
+    
+    let origEnd = origStart
+    normCount = 0
+    for (let i = origStart; i < content.length && normCount < normOldUnicode.length; i++) {
+      origEnd = i + 1
+      normCount += normalizeUnicode(content[i]).length
+    }
+    
+    const matchedBlock = content.slice(origStart, origEnd)
+    const updated = content.slice(0, origStart) + newString + content.slice(origEnd)
     return { content: updated, diff: generateDiff(matchedBlock, newString), strategy: 'unicode_normalized' }
   }
 
@@ -313,9 +347,6 @@ export function registerBuiltinTools(
   delegateAgentFactory?: (goal: string) => Promise<string>,
   isSubagent: boolean = false
 ): void {
-  if (builtinToolsRegistered) return
-  builtinToolsRegistered = true
-
   const memory = memoryStore || new MemoryStore()
   const todo = todoStore || new TodoStore()
 
@@ -348,6 +379,37 @@ export function registerBuiltinTools(
 
       if (!existsSync(fullPath)) {
         return JSON.stringify({ error: `File not found: ${rawPath}` })
+      }
+
+      // BUG-04: Check file type and size before reading
+      try {
+        const stats = statSync(fullPath)
+        
+        // Only read regular files
+        if (!stats.isFile()) {
+          return JSON.stringify({ error: `Not a regular file: ${rawPath}` })
+        }
+        
+        // Reject files > 10 MB
+        const maxSize = 10 * 1024 * 1024
+        if (stats.size > maxSize) {
+          return JSON.stringify({ 
+            error: `File too large: ${(stats.size / 1024 / 1024).toFixed(1)} MB (max 10 MB)`,
+            hint: 'Use terminal with head/tail for large files'
+          })
+        }
+        
+        // Detect binary files
+        const fd = require('fs').openSync(fullPath, 'r')
+        const buffer = Buffer.alloc(8192)
+        const bytesRead = require('fs').readSync(fd, buffer, 0, 8192, 0)
+        require('fs').closeSync(fd)
+        
+        if (buffer.slice(0, bytesRead).includes(0)) {
+          return JSON.stringify({ error: `Binary file detected: ${rawPath}` })
+        }
+      } catch (err: any) {
+        return JSON.stringify({ error: `Cannot stat file: ${err.message}` })
       }
 
       try {
@@ -670,7 +732,7 @@ export function registerBuiltinTools(
       }
 
       // Probe command to detect chained cd transitions
-      const probeCommand = `${rawCommand}\n__RET=$?; echo "\n__VALLEN_CWD__=$(pwd)"; exit $__RET`
+      const probeCommand = `${rawCommand}\n__RET=$?; printf '\n__VALLEN_CWD__=%s\n' "$(pwd)"; exit $__RET`
 
       return new Promise<string>((resolveResult) => {
         const proc = spawn('/bin/sh', ['-c', probeCommand], {
@@ -797,7 +859,6 @@ export function registerBuiltinTools(
       const limit = Math.min(10, Math.max(1, Number(args.limit) || 5))
 
       try {
-        process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
         const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
         const res = await fetch(url, {
           headers: {
@@ -824,7 +885,7 @@ export function registerBuiltinTools(
 
         if (results.length === 0) {
           return JSON.stringify({
-            data: { web: [{ title: 'Search completed', url: `https://duckduckgo.com/?q=${encodeURIComponent(query)}`, description: `Query: ${query}` }] }
+            error: 'No search results found (parsing failed or blocked by CAPTCHA)'
           })
         }
 
@@ -862,15 +923,40 @@ export function registerBuiltinTools(
       const charLimit = Math.min(50_000, Number(args.char_limit) || 15_000)
       const results: Array<{ url: string; title: string; content: string; error?: string }> = []
 
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
-
       for (const targetUrl of urls.slice(0, 5)) {
         try {
+          // BUG-20: Block private IPs (SSRF protection)
+          const url = new URL(targetUrl)
+          const hostname = url.hostname
+          if (
+            hostname === 'localhost' ||
+            hostname.startsWith('127.') ||
+            hostname.startsWith('10.') ||
+            hostname.startsWith('192.168.') ||
+            hostname.match(/^172\.(1[6-9]|2[0-9]|3[01])\./) ||
+            hostname === '::1' ||
+            hostname.startsWith('fe80:')
+          ) {
+            results.push({
+              url: targetUrl,
+              title: 'Blocked',
+              content: '',
+              error: 'Private IP addresses blocked (SSRF protection)'
+            })
+            continue
+          }
+          
+          // BUG-20: Add timeout (30s)
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), 30000)
+          
           const res = await fetch(targetUrl, {
             headers: {
               'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
+            },
+            signal: controller.signal
           })
+          clearTimeout(timeoutId)
           const rawHtml = await res.text()
 
           const titleMatch = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
@@ -952,7 +1038,7 @@ export function registerBuiltinTools(
       return JSON.stringify({
         clarification_needed: true,
         responses,
-        message: 'Presented clarification questions to the user.'
+        message: 'Clarification tool NOT IMPLEMENTED. Ask your questions in the final response text and stop.'
       })
     }
   })
@@ -1084,7 +1170,6 @@ export function registerBuiltinTools(
         : join(outDir, `img_${Date.now()}.png`)
 
       try {
-        process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
         let width = 1024
         let height = 1024
         if (args.aspect_ratio === '16:9') { width = 1280; height = 720 }
@@ -1140,10 +1225,16 @@ export function registerBuiltinTools(
         execFile('python3', ['-c', code], { cwd: workdir, timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
           const rawOutput = (stdout + (stderr ? `\n[STDERR]\n${stderr}` : '')).trim()
           const { text: output, truncated } = truncateOutput(rawOutput, 50_000)
+          
+          // BUG-12: Use toExitCode for timeout handling
+          const exitCode = toExitCode(err)
+          const timedOut = err?.killed || err?.signal === 'SIGTERM'
+          
           resolveResult(JSON.stringify({
-            exit_code: err?.code ?? 0,
+            exit_code: exitCode,
             stdout: output,
             truncated,
+            timed_out: timedOut,
             error: err ? err.message : null
           }))
         })
@@ -1171,7 +1262,7 @@ export function registerBuiltinTools(
       return JSON.stringify({
         status: 'active',
         connectors: {
-          '9router': { status: 'connected', endpoint: 'http://127.0.0.1:20128/v1' },
+          '9router': { status: 'unknown', endpoint: 'http://127.0.0.1:20128/v1', note: 'Status check not implemented' },
           'electron_terminal': { status: 'ready', window: 'active' },
           'filesystem': { status: 'writable', home: homedir() },
           'git': { status: existsSync(join(process.cwd(), '.git')) ? 'git_repository' : 'none' }
@@ -1234,30 +1325,41 @@ export function registerBuiltinTools(
     })
   }
 
-  // 16. skill_manage
+
+  // 19. skill_manage - Install/uninstall/update skills from hub
   const skillManageSchema: ToolSchema = {
     name: 'skill_manage',
-    description: 'Create or update SKILL.md documents in the skills directory.',
+    description: 'Manage skills: search hub, install from GitHub/official sources, uninstall, or update. User approval required for install operations.',
     parameters: {
       type: 'object',
       properties: {
-        operations: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              action: { type: 'string', enum: ['create', 'patch', 'delete'] },
-              name: { type: 'string', description: 'Skill name' },
-              category: { type: 'string', description: 'Category name' },
-              content: { type: 'string', description: 'Full SKILL.md content (frontmatter + body)' },
-              old_string: { type: 'string', description: 'For patch: target substring to replace' },
-              new_string: { type: 'string', description: 'For patch: new replacement text' }
-            },
-            required: ['name', 'action']
-          }
+        action: {
+          type: 'string',
+          enum: ['search', 'install', 'uninstall', 'update', 'list_installed'],
+          description: 'Action: search (find skills), install (add skill), uninstall (remove), update (refresh), list_installed (show installed)'
+        },
+        query: {
+          type: 'string',
+          description: 'Search query (for action=search)'
+        },
+        identifier: {
+          type: 'string',
+          description: 'Skill identifier: GitHub URL, "official/category/name", or skill name'
+        },
+        name: {
+          type: 'string',
+          description: 'Skill name (for install override or uninstall/update)'
+        },
+        category: {
+          type: 'string',
+          description: 'Category for install (optional, e.g., "devops", "research")'
+        },
+        source: {
+          type: 'string',
+          description: 'Source filter for search: "official" or "github"'
         }
       },
-      required: ['operations']
+      required: ['action']
     }
   }
 
@@ -1266,152 +1368,136 @@ export function registerBuiltinTools(
     schema: skillManageSchema,
     toolset: 'skills',
     handler: async (args) => {
-      const ops = Array.isArray(args.operations) ? args.operations : []
-      const results: any[] = []
-      const skillsDir = join(homedir(), '.vallenatrix', 'skills')
-      mkdirSync(skillsDir, { recursive: true })
+      const action = String(args.action || 'search')
 
-      for (const op of ops) {
-        const skillName = String(op.name || '').trim()
-        const cat = String(op.category || 'general').trim()
-        
-        // Validate name and category
-        const nameRegex = /^[a-z0-9][a-z0-9._-]*$/i
-        if (!skillName || !nameRegex.test(skillName)) {
-          results.push({ name: skillName, error: 'Invalid skill name: must match /^[a-z0-9][a-z0-9._-]*$/i' })
-          continue
-        }
-        if (!nameRegex.test(cat)) {
-          results.push({ name: skillName, error: 'Invalid category: must match /^[a-z0-9][a-z0-9._-]*$/i' })
-          continue
-        }
-        
-        const catDir = resolve(skillsDir, cat, skillName)
-        
-        // Ensure paths stay within skillsDir
-        if (!catDir.startsWith(skillsDir + require('path').sep)) {
-          results.push({ name: skillName, error: 'Invalid path: must be within skills directory' })
-          continue
-        }
-        
-        const skillFile = join(catDir, 'SKILL.md')
-
-        if (op.action === 'create') {
-          mkdirSync(catDir, { recursive: true })
-          writeFileSync(skillFile, String(op.content || ''), 'utf-8')
-          results.push({ name: skillName, action: 'created', path: skillFile })
-        } else if (op.action === 'patch') {
-          if (!existsSync(skillFile)) {
-            results.push({ name: skillName, error: `Skill file does not exist: ${skillFile}` })
-            continue
-          }
-          const existing = readFileSync(skillFile, 'utf-8')
-          const patched = fuzzyReplace(existing, String(op.old_string), String(op.new_string))
-          writeFileSync(skillFile, patched.content, 'utf-8')
-          results.push({ name: skillName, action: 'patched', strategy: patched.strategy })
-        } else if (op.action === 'delete') {
-          if (!existsSync(skillFile)) {
-            results.push({ name: skillName, error: `Skill file does not exist: ${skillFile}` })
-            continue
-          }
-          const { unlinkSync, rmdirSync } = await import('fs')
-          unlinkSync(skillFile)
-          try {
-            rmdirSync(catDir)
-          } catch {}
-          results.push({ name: skillName, action: 'deleted' })
-        }
-      }
-
-      skillLoader.reload()
-      return JSON.stringify({ success: true, results })
-    }
-  })
-
-  // 17. skill_view
-  const skillViewSchema: ToolSchema = {
-    name: 'skill_view',
-    description: "Load a skill's full content or access its linked files (references, templates, scripts). First call returns SKILL.md content plus a 'linked_files' dict. To access linked files, call again with file_path parameter.",
-    parameters: {
-      type: 'object',
-      properties: {
-        name: { type: 'string', description: 'The skill name (use skills_list to see available skills)' },
-        file_path: { type: 'string', description: 'OPTIONAL: Path to a linked file within the skill (e.g., references/cli.md)' }
-      },
-      required: ['name']
-    }
-  }
-
-  registry.register({
-    name: 'skill_view',
-    schema: skillViewSchema,
-    toolset: 'skills',
-    handler: async (args) => {
-      const skillName = String(args.name || '')
-      const skill = skillLoader.get(skillName)
-
-      if (!skill) {
-        return JSON.stringify({ error: `Skill not found: ${skillName}` })
-      }
-
-      if (args.file_path) {
-        const filePath = String(args.file_path)
-        const skillDir = dirname(skill.path)
-        const linkedPath = resolve(skillDir, filePath)
-        
-        // Prevent path traversal
-        if (!linkedPath.startsWith(skillDir + require('path').sep)) {
-          return JSON.stringify({ error: `Invalid file path: must be within skill directory` })
-        }
-        
-        if (!existsSync(linkedPath)) {
-          return JSON.stringify({ error: `Linked file not found: ${args.file_path}` })
-        }
-        try {
-          const content = readFileSync(linkedPath, 'utf-8')
+      try {
+        if (action === 'search') {
+          const { searchSkills } = require('./skills_hub_search')
+          const query = String(args.query || '')
+          const source = args.source ? String(args.source) : undefined
+          const results = await searchSkills({ query, source, limit: 20 })
+          
           return JSON.stringify({
-            name: skillName,
-            file_path: args.file_path,
-            content
+            action: 'search',
+            query,
+            results: results.map((r: any) => ({
+              name: r.name,
+              identifier: r.identifier,
+              description: r.description,
+              source: r.source,
+              trust_level: r.trust_level,
+              install_command: r.install_command
+            }))
           })
-        } catch (err: any) {
-          return JSON.stringify({ error: err.message || 'Failed to read linked file' })
         }
+
+        if (action === 'list_installed') {
+          const { listInstalledSkills } = require('./skills_hub_install')
+          const installed = listInstalledSkills()
+          
+          return JSON.stringify({
+            action: 'list_installed',
+            skills: installed.map((s: any) => ({
+              name: s.name,
+              source: s.source,
+              identifier: s.identifier,
+              installed_at: s.installed_at,
+              install_path: s.install_path
+            }))
+          })
+        }
+
+        if (action === 'install') {
+          const identifier = String(args.identifier || '')
+          if (!identifier) {
+            return JSON.stringify({ error: 'Missing required field: identifier' })
+          }
+
+          // Parse identifier
+          const { parseSkillIdentifier } = require('./skills_hub_models')
+          const parsed = parseSkillIdentifier(identifier)
+
+          // Fetch bundle
+          const { fetchGitHubSkill, fetchOfficialSkill } = require('./skills_hub_search')
+          let bundle
+
+          if (parsed.source === 'github' && parsed.url) {
+            bundle = await fetchGitHubSkill(parsed.url)
+          } else if (parsed.source === 'official' && parsed.category) {
+            bundle = await fetchOfficialSkill(parsed.category, parsed.name)
+          } else {
+            return JSON.stringify({ 
+              error: `Unsupported identifier format: ${identifier}. Use GitHub URL or official/category/name` 
+            })
+          }
+
+          // Quarantine
+          const { quarantineBundle, installFromQuarantine } = require('./skills_hub_install')
+          const quarantinePath = quarantineBundle(bundle)
+
+          // Install with approval check
+          const installOptions = {
+            name: args.name ? String(args.name) : undefined,
+            category: args.category ? String(args.category) : bundle.category,
+            overwrite: false,
+            skipScan: false
+          }
+
+          const result = installFromQuarantine(quarantinePath, bundle, installOptions)
+
+          // Cleanup quarantine
+          const { rmSync } = require('fs')
+          rmSync(quarantinePath, { recursive: true, force: true })
+
+          if (result.success) {
+            // Reload skills
+            skillLoader.scanAll()
+          }
+
+          return JSON.stringify(result)
+        }
+
+        if (action === 'uninstall') {
+          const name = String(args.name || '')
+          if (!name) {
+            return JSON.stringify({ error: 'Missing required field: name' })
+          }
+
+          const { uninstallSkill } = require('./skills_hub_install')
+          const result = uninstallSkill(name)
+
+          if (result.success) {
+            // Reload skills
+            skillLoader.scanAll()
+          }
+
+          return JSON.stringify(result)
+        }
+
+        if (action === 'update') {
+          const name = String(args.name || '')
+          if (!name) {
+            return JSON.stringify({ error: 'Missing required field: name' })
+          }
+
+          const { updateSkill } = require('./skills_hub_install')
+          const result = await updateSkill(name)
+
+          if (result.success) {
+            // Reload skills
+            skillLoader.scanAll()
+          }
+
+          return JSON.stringify(result)
+        }
+
+        return JSON.stringify({ error: `Unknown action: ${action}` })
+      } catch (err: any) {
+        return JSON.stringify({ 
+          error: err.message || 'Skill management operation failed',
+          stack: err.stack
+        })
       }
-
-      return JSON.stringify({
-        name: skill.name,
-        metadata: skill.metadata,
-        content: skill.content,
-        linked_files: skill.linkedFiles || {}
-      })
-    }
-  })
-
-  // 18. skills_list
-  const skillsListSchema: ToolSchema = {
-    name: 'skills_list',
-    description: 'List available skills (name, description, category). Use skill_view(name) to load full content.',
-    parameters: {
-      type: 'object',
-      properties: {
-        category: { type: 'string', description: 'Optional category filter' }
-      }
-    }
-  }
-
-  registry.register({
-    name: 'skills_list',
-    schema: skillsListSchema,
-    toolset: 'skills',
-    handler: async (args) => {
-      const category = args.category ? String(args.category) : undefined
-      const skills = category ? skillLoader.listByCategory(category) : skillLoader.list()
-      return JSON.stringify(skills.map(s => ({
-        name: s.name,
-        category: s.metadata.category,
-        description: s.metadata.description
-      })))
     }
   })
 }

@@ -47,7 +47,7 @@ test('Core Tools execution via registry', async (t) => {
   const testDir = mkdtempSync(join(tmpdir(), 'vallenagent-test-'))
   const loader = new SkillLoader([testDir])
   loader.load()
-  registerBuiltinTools(loader)
+  registerBuiltinTools(loader, undefined, undefined, undefined, false)
 
   // Verify tools registered
   const schemas = registry.getSchemas()

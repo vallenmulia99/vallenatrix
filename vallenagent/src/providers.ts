@@ -24,6 +24,7 @@ export interface CompletionRequest {
   max_tokens?: number
   temperature?: number
   stream?: boolean
+  signal?: AbortSignal  // BUG-18: Support abort
 }
 
 export interface CompletionResponse {
@@ -76,7 +77,8 @@ export class OpenAICompatibleProvider implements Provider {
         max_tokens: request.max_tokens,
         temperature: request.temperature,
         stream: false
-      })
+      }),
+      signal: request.signal  // BUG-18: Pass abort signal
     })
 
     if (!response.ok) {
@@ -84,7 +86,15 @@ export class OpenAICompatibleProvider implements Provider {
       throw new Error(`Provider API error: ${response.status} ${error}`)
     }
 
-    return (await response.json()) as CompletionResponse
+    const data = await response.json()
+    
+    // BUG-09: Check for valid choices
+    if (!data.choices || data.choices.length === 0) {
+      const errorMsg = data.error ? JSON.stringify(data.error).slice(0, 500) : JSON.stringify(data).slice(0, 500)
+      throw new Error(`Provider returned no choices: ${errorMsg}`)
+    }
+
+    return data as CompletionResponse
   }
 }
 

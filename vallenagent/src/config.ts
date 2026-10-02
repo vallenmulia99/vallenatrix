@@ -17,7 +17,9 @@ export const DEFAULT_CONFIG: AgentConfig = {
   skills: {
     paths: [
       join(homedir(), '.vallenatrix', 'skills')
-    ]
+    ],
+    disabled: [],
+    enabled: []
   },
   terminal: {
     cwd: process.cwd()
@@ -63,9 +65,9 @@ export function loadConfig(): AgentConfig {
         ...DEFAULT_CONFIG.skills,
         ...userConfig.skills
       },
+      // BUG-10: Always use current cwd, never persisted value
       terminal: {
-        ...DEFAULT_CONFIG.terminal,
-        ...userConfig.terminal
+        cwd: process.cwd()
       }
     }
 
@@ -76,7 +78,7 @@ export function loadConfig(): AgentConfig {
     return merged
   } catch (err) {
     console.error('[Config] Failed to load, using defaults:', err)
-    return DEFAULT_CONFIG
+    return structuredClone(DEFAULT_CONFIG)
   }
 }
 
@@ -95,15 +97,24 @@ export function saveConfig(updates: Partial<AgentConfig>): AgentConfig {
     skills: {
       ...current.skills,
       ...(updates.skills || {})
-    },
-    terminal: {
-      ...current.terminal,
-      ...(updates.terminal || {})
     }
+    // BUG-10: Never persist terminal.cwd (runtime state)
   }
 
   mkdirSync(home, { recursive: true })
-  writeFileSync(configPath, JSON.stringify(updated, null, 2), 'utf-8')
+  
+  // BUG-10: Write config with 0600 permissions (API keys inside)
+  const existingConfig = existsSync(configPath)
+  if (existingConfig) {
+    // Backup before overwrite
+    const backupPath = configPath + '.bak'
+    try {
+      const oldContent = readFileSync(configPath, 'utf-8')
+      writeFileSync(backupPath, oldContent, { mode: 0o600 })
+    } catch {}
+  }
+  
+  writeFileSync(configPath, JSON.stringify(updated, null, 2), { mode: 0o600 })
   return updated
 }
 

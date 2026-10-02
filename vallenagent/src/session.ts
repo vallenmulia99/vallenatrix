@@ -1,6 +1,6 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
+import { getVallenatrixHome } from './config'
 import type { Message } from './providers'
 
 export interface SessionData {
@@ -17,7 +17,7 @@ export class SessionManager {
   private baseDir: string
 
   constructor(customDir?: string) {
-    this.baseDir = customDir || join(homedir(), '.vallenatrix', 'sessions')
+    this.baseDir = customDir || join(getVallenatrixHome(), 'sessions')
     this.ensureDir()
   }
 

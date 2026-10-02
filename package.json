@@ -8,10 +8,10 @@
     "vallenagent"
   ],
   "scripts": {
-    "dev": "npm -w vallenterminal run dev",
-    "build": "npm -w vallenterminal run build",
+    "dev": "npm -w vallenagent run build && npm -w vallenterminal run dev",
+    "build": "npm -w vallenagent run build && npm -w vallenterminal run build",
     "rebuild:pty": "cd node_modules/node-pty && npx --yes node-gyp@10 rebuild --target=28.0.0 --arch=x64 --dist-url=https://electronjs.org/headers",
-    "start": "npm -w vallenterminal run start",
+    "start": "npm -w vallenagent run build && npm -w vallenterminal run start",
     "test": "npm -w vallenterminal run test"
   },
   "keywords": ["terminal", "electron"],

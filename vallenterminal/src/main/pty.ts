@@ -1,6 +1,6 @@
 import { spawn, IPty } from 'node-pty'
 import { existsSync, readFileSync, accessSync, constants } from 'fs'
-import { isAbsolute } from 'path'
+import { isAbsolute, join } from 'path'
 
 function getValidShell(preferredShell: string): string {
   const defaultFallback = process.env.SHELL || '/bin/bash'
@@ -60,6 +60,24 @@ export class PtyManager {
       cwd,
       env: process.env as Record<string, string>
     })
+
+    // Send banner on startup
+    setTimeout(() => {
+      const bannerPath = join(process.cwd(), 'banner.txt')
+      if (existsSync(bannerPath)) {
+        try {
+          const banner = readFileSync(bannerPath, 'utf-8')
+          const coloredBanner = `\x1b[38;5;141m${banner}\x1b[0m\n\n`
+          const credit = `\x1b[36m╭─────────────────────────────────────────────────────╮\x1b[0m
+\x1b[36m│\x1b[0m  \x1b[1;35mVallenatrix\x1b[0m \x1b[90m-\x1b[0m AI Terminal dengan Gaya         \x1b[36m│\x1b[0m
+\x1b[36m│\x1b[0m  Created by \x1b[33m@vallenganteng\x1b[0m                     \x1b[36m│\x1b[0m
+\x1b[36m╰─────────────────────────────────────────────────────╯\x1b[0m\n\n`
+          onData(coloredBanner + credit)
+        } catch {
+          // Ignore banner errors
+        }
+      }
+    }, 100)
 
     this.ptyProcess.onData((data) => {
       onData(data)

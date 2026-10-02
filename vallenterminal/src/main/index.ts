@@ -5,6 +5,7 @@ import { IPC_CHANNELS } from '../shared/channels'
 import { PtyManager } from './pty'
 import { ConfigManager } from './config'
 import { registerMediaProtocol, selectMediaFile } from './media'
+import { handleSkillsCommand } from './skills_commands'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -216,6 +217,13 @@ function setupIpc(): void {
           }
         }
         const newToken = parts[1].trim()
+        
+        // BUG-20: Mask token in terminal output
+        mainWindow?.webContents.send(IPC_CHANNELS.AGENT_STATUS, {
+          type: 'system',
+          message: '\x1b[90m[Command: /token ***]\x1b[0m'
+        })
+        
         agent.setToken(newToken, '9router')
         return {
           response: `\x1b[32m✔ 9router API token connected and saved!\x1b[0m\nEndpoint: http://localhost:20128/v1\nModel: ${agent.getConfig().providers['9router']?.model || 'ag/gemini-3.8-flash-medium'}`
@@ -433,6 +441,16 @@ function setupIpc(): void {
         onToolEnd: (info: any) => {
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS, { type: 'tool_end', message: info.preview })
+          }
+        },
+        onReviewComplete: (summary: string) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.AGENT_STATUS, { type: 'review_complete', message: `💾 Self-improvement: ${summary}` })
+          }
+        },
+        onReviewError: (error: string) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            console.error('[Review] Background review error:', error)
           }
         }
       }

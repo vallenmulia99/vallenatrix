@@ -121,8 +121,17 @@ function loadSkillFile(filePath: string, rootDir: string): Skill | null {
 
 export class SkillLoader {
   private skills: Map<string, Skill> = new Map()
+  private disabledSkills: Set<string> = new Set()
+  private enabledSkills: Set<string> = new Set()
 
-  constructor(private skillPaths: string[]) {}
+  constructor(private skillPaths: string[], private config?: { disabled?: string[]; enabled?: string[] }) {
+    if (config?.disabled) {
+      this.disabledSkills = new Set(config.disabled)
+    }
+    if (config?.enabled) {
+      this.enabledSkills = new Set(config.enabled)
+    }
+  }
 
   load(): void {
     this.skills.clear()
@@ -131,7 +140,25 @@ export class SkillLoader {
       scanDirectory(path, this.skills, path)
     }
     
-    console.log(`[Skills] Loaded ${this.skills.size} skills`)
+    // Filter disabled skills
+    if (this.disabledSkills.size > 0) {
+      for (const name of this.disabledSkills) {
+        this.skills.delete(name)
+      }
+    }
+    
+    // If enabled list exists, only keep those
+    if (this.enabledSkills.size > 0) {
+      const toKeep = new Set<string>()
+      for (const name of this.enabledSkills) {
+        if (this.skills.has(name)) {
+          toKeep.add(name)
+        }
+      }
+      this.skills = new Map(Array.from(this.skills.entries()).filter(([name]) => toKeep.has(name)))
+    }
+    
+    console.log(`[Skills] Loaded ${this.skills.size} skills (${this.disabledSkills.size} disabled)`)
   }
 
   get(name: string): Skill | undefined {
@@ -186,5 +213,32 @@ export class SkillLoader {
 
   reload(): void {
     this.load()
+  }
+
+  scanAll(): void {
+    this.load()
+  }
+
+  disable(name: string): boolean {
+    if (this.disabledSkills.has(name)) return false
+    this.disabledSkills.add(name)
+    this.skills.delete(name)
+    return true
+  }
+
+  enable(name: string): boolean {
+    if (!this.disabledSkills.has(name)) return false
+    this.disabledSkills.delete(name)
+    // Rescan to add it back
+    this.load()
+    return true
+  }
+
+  getDisabled(): string[] {
+    return Array.from(this.disabledSkills)
+  }
+
+  getEnabled(): string[] {
+    return Array.from(this.enabledSkills)
   }
 }

@@ -17,7 +17,7 @@ test('All Hermes Toolsets Registration & Execution', async (t) => {
   const memory = new MemoryStore(join(testDir, 'memories'))
   const todo = new TodoStore()
 
-  registerBuiltinTools(loader, memory, todo, async (goal) => `Subagent done: ${goal}`)
+  registerBuiltinTools(loader, memory, todo, async (goal) => `Subagent done: ${goal}`, false)
 
   const schemas = registry.getSchemas()
   const names = schemas.map(s => s.name)

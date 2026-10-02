@@ -113,7 +113,8 @@ echo "[2/4] Melakukan build native module node-pty untuk Electron..."
 npm run rebuild:pty
 
 # 6. Build aplikasi
-echo "[3/4] Membangun bundel aplikasi (vallenterminal)..."
+echo "[3/4] Membangun bundel aplikasi (vallenagent + vallenterminal)..."
+npm -w vallenagent run build
 npm -w vallenterminal run build
 
 # 7. Setup symlink ~/.local/bin/vallenatrix

@@ -14,6 +14,8 @@ export interface AgentConfig {
   max_iterations?: number
   skills?: {
     paths?: string[]
+    disabled?: string[]
+    enabled?: string[]
   }
   terminal?: {
     cwd?: string

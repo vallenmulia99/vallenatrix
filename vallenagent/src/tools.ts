@@ -38,6 +38,7 @@ export interface ToolRegistration {
 
 class ToolRegistry {
   private tools: Map<string, ToolRegistration> = new Map()
+  private whitelist: string[] | null = null
 
   register(tool: ToolRegistration): void {
     if (this.tools.has(tool.name)) {
@@ -58,8 +59,21 @@ class ToolRegistry {
     return this.list().filter(t => t.toolset === toolset)
   }
 
+  filterTools(whitelist: string[]): void {
+    this.whitelist = whitelist
+  }
+
+  clearFilter(): void {
+    this.whitelist = null
+  }
+
   getSchemas(enabledToolsets: string[] = []): ToolSchema[] {
     let tools = this.list()
+    
+    // Apply whitelist if active
+    if (this.whitelist) {
+      tools = tools.filter(t => this.whitelist!.includes(t.name))
+    }
     
     if (enabledToolsets.length > 0) {
       tools = tools.filter(t => enabledToolsets.includes(t.toolset))

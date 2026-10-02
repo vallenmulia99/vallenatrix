@@ -8,12 +8,14 @@ import type { ToolContext } from './tools'
 import { createProvider } from './providers'
 import { registry } from './tools'
 import { SkillLoader } from './skills'
+import { syncBundledSkills, readManifest } from './skills_sync'
 import { MemoryStore } from './memory'
 import { TodoStore } from './todo'
 import { SessionManager } from './session'
 import { loadConfig, getActiveProvider, setProviderToken, saveConfig } from './config'
 import { registerBuiltinTools } from './builtin_tools'
 import { formatToolStart, formatToolEnd } from './display'
+import { spawnBackgroundReview, type ReviewCallbacks } from './background_review'
 
 export interface AgentOptions {
   config?: AgentConfig
@@ -46,6 +48,8 @@ export interface AgentCallbacks {
     tokensPerSec: number
     contextWindow: number
   }) => void
+  onReviewComplete?: (summary: string) => void
+  onReviewError?: (error: string) => void
 }
 
 function pruneOldToolResults(messages: Message[], protectTailCount: number = 8): Message[] {
@@ -80,6 +84,8 @@ export class AIAgent {
   private isSubagent: boolean
   private isInterrupted: boolean = false
   private conversationHistory: Message[] = []
+  private chatLock: Promise<unknown> = Promise.resolve()
+  private abortController: AbortController | null = null
 
   constructor(options: AgentOptions = {}) {
     this.config = options.config || loadConfig()
@@ -99,7 +105,15 @@ export class AIAgent {
 
     // Initialize skill loader
     const skillPaths = this.config.skills?.paths || []
-    this.skillLoader = new SkillLoader(skillPaths)
+    const skillConfig = {
+      disabled: this.config.skills?.disabled || [],
+      enabled: this.config.skills?.enabled || []
+    }
+    this.skillLoader = new SkillLoader(skillPaths, skillConfig)
+    
+    // Auto-sync bundled skills on first run
+    this.syncBundledSkillsIfNeeded()
+    
     this.skillLoader.load()
 
     // Initialize memory and todo stores
@@ -126,6 +140,10 @@ export class AIAgent {
 
   interrupt(): void {
     this.isInterrupted = true
+    // BUG-18: Abort ongoing provider/tool calls
+    if (this.abortController) {
+      this.abortController.abort()
+    }
   }
 
   getSessionId(): string {
@@ -139,7 +157,8 @@ export class AIAgent {
     this.sessionId = data.id
     this.conversationHistory = data.messages || []
     if (data.model) {
-      this.setModel(data.model)
+      // BUG-20: Set provider model without persisting to config
+      this.provider.model = data.model
     }
     if (data.cwd) {
       if (!this.config.terminal) this.config.terminal = {}
@@ -151,10 +170,30 @@ export class AIAgent {
   resetSession(): void {
     this.conversationHistory = []
     this.sessionId = `session-${Date.now()}`
+    // BUG-20: Clear todo store on session reset
+    this.todoStore.write([])
   }
 
   async chat(userMessage: string, callbacks?: AgentCallbacks, systemPrompt?: string): Promise<AgentResponse> {
+    // BUG-06: Serialize chat calls to prevent history corruption
+    const prevLock = this.chatLock
+    let releaseLock!: () => void
+    this.chatLock = new Promise<void>(resolve => { releaseLock = resolve })
+    
+    await prevLock
+    
+    try {
+      return await this._chatImpl(userMessage, callbacks, systemPrompt)
+    } finally {
+      releaseLock()
+    }
+  }
+
+  private async _chatImpl(userMessage: string, callbacks?: AgentCallbacks, systemPrompt?: string): Promise<AgentResponse> {
     this.isInterrupted = false
+    
+    // BUG-18: Create AbortController for this turn
+    this.abortController = new AbortController()
 
     // Rebuild system prompt every turn (fresh context)
     if (this.conversationHistory.length === 0) {
@@ -203,17 +242,19 @@ export class AIAgent {
       const response = await this.provider.chat({
         model: this.provider.model,
         messages,
-        tools: tools.length > 0 ? tools : undefined
+        tools: tools.length > 0 ? tools : undefined,
+        signal: this.abortController?.signal  // BUG-18: Pass abort signal
       })
 
       const choice = response.choices[0]
       const assistantMessage = choice.message
 
-      // Track usage
+      // BUG-19: Track usage correctly (use prompt_tokens for context %)
       if (response.usage) {
-        totalTokens += response.usage.total_tokens
-        promptTokens += response.usage.prompt_tokens || 0
+        // totalTokens accumulates duplicates across iterations - use prompt_tokens
+        promptTokens = response.usage.prompt_tokens || 0
         completionTokens += response.usage.completion_tokens || 0
+        totalTokens = promptTokens + completionTokens
       }
 
       // Format assistant message to be strictly OpenAI/Gemini compliant
@@ -316,26 +357,19 @@ export class AIAgent {
       const finalContent = assistantMessage.content || ''
       
       // Guard: empty or promise-only response
+      // BUG-20: Use local counter, don't persist nudge
+      let emptyRetries = 0
       if (!finalContent.trim()) {
-        if (iterations < 3) {
-          this.conversationHistory.push({
-            role: 'user',
-            content: 'Your response was empty. Provide a response or make tool calls.'
-          })
-          continue
+        if (emptyRetries < 2) {
+          emptyRetries++
+          // Skip - let it return empty and user can retry
         }
       }
       
       // Guard: promise pattern without tool calls
       const promisePattern = /^(saya akan|i will|let me|gue bakal|i'll)\s/i
       if (finalContent.trim().length < 100 && promisePattern.test(finalContent.trim())) {
-        if (iterations < 3) {
-          this.conversationHistory.push({
-            role: 'user',
-            content: 'Act now with tool calls or provide final answer.'
-          })
-          continue
-        }
+        // Skip nudge - just return promise response
       }
 
       const latencySec = (Date.now() - startTime) / 1000
@@ -351,15 +385,22 @@ export class AIAgent {
         contextWindow
       })
 
-      // Persist session to disk
-      try {
-        this.sessionManager.saveSession(
-          this.sessionId,
-          this.conversationHistory,
-          this.config.terminal?.cwd || process.cwd(),
-          this.provider.model
-        )
-      } catch {}
+      // Persist session to disk (skip for subagents - BUG-20)
+      if (!this.isSubagent) {
+        try {
+          this.sessionManager.saveSession(
+            this.sessionId,
+            this.conversationHistory,
+            this.config.terminal?.cwd || process.cwd(),
+            this.provider.model
+          )
+        } catch {}
+      }
+
+      // Spawn background review (parent agent only, successful turns)
+      if (!this.isSubagent && iterations > 0) {
+        this.spawnBackgroundReview(callbacks)
+      }
 
       return {
         response: assistantMessage.content || '',
@@ -393,6 +434,16 @@ export class AIAgent {
       completionTokens
     }
   } catch (err: any) {
+    // BUG-08: Rollback user message if no progress made
+    const progressMade = this.conversationHistory.length > startHistoryLen + 1
+    
+    if (!progressMade) {
+      // No assistant/tool messages added, rollback the user message
+      while (this.conversationHistory.length > startHistoryLen) {
+        this.conversationHistory.pop()
+      }
+    }
+    
     // Rollback incomplete assistant messages or close hanging tool_calls
     while (this.conversationHistory.length > startHistoryLen) {
       const last = this.conversationHistory[this.conversationHistory.length - 1]
@@ -417,15 +468,44 @@ export class AIAgent {
       }
     }
     
-    // Save session even after error
-    try {
-      this.sessionManager.saveSession(
-        this.sessionId,
-        this.conversationHistory,
-        this.config.terminal?.cwd || process.cwd(),
-        this.provider.model
-      )
-    } catch {}
+    // BUG-18: Check if aborted, save session and return gracefully
+    if (err?.name === 'AbortError') {
+      // Save session even on interrupt (skip if subagent)
+      if (!this.isSubagent) {
+        try {
+          this.sessionManager.saveSession(
+            this.sessionId,
+            this.conversationHistory,
+            this.config.terminal?.cwd || process.cwd(),
+            this.provider.model
+          )
+        } catch {}
+      }
+      
+      return {
+        response: '\n\n[Interrupted by user]',
+        iterations: 0,
+        totalTokens: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        latencySec: 0,
+        tokensPerSec: 0,
+        contextWindow: 1_048_576,
+        toolCalls: 0
+      }
+    }
+    
+    // Save session even after error (skip if subagent)
+    if (!this.isSubagent) {
+      try {
+        this.sessionManager.saveSession(
+          this.sessionId,
+          this.conversationHistory,
+          this.config.terminal?.cwd || process.cwd(),
+          this.provider.model
+        )
+      } catch {}
+    }
     
     throw err
   }
@@ -439,8 +519,9 @@ export class AIAgent {
     const home = homedir()
     const hostOS = platform()
     const now = new Date()
-    const dateStr = now.toISOString().split('T')[0]
-    const timeStr = now.toTimeString().split(' ')[0]
+    // BUG-11: Use local date/time, not UTC
+    const dateStr = now.toLocaleDateString('en-CA') // YYYY-MM-DD
+    const timeStr = now.toLocaleTimeString('en-GB', { hour12: false }) // HH:MM:SS
 
     const sections: string[] = [
       `You are Vallen AI Agent, an autonomous coding and task-execution agent embedded in Vallenatrix Terminal (Hermes-inspired architecture).
@@ -516,5 +597,47 @@ Pahami bahasa santai/casual Indonesia (bang, lu, gw, gas, gasin, lanjut, yoi, si
 
   reload(): void {
     this.skillLoader.reload()
+  }
+
+  private spawnBackgroundReview(callbacks?: AgentCallbacks): void {
+    const conversationSnapshot = [...this.conversationHistory]
+    
+    spawnBackgroundReview(
+      conversationSnapshot,
+      async (userPrompt: string, systemPrompt: string, toolWhitelist: string[]) => {
+        const reviewAgent = new AIAgent({
+          config: this.config,
+          maxIterations: 10,
+          isSubagent: true
+        })
+        
+        // Override system prompt and filter tools
+        registry.filterTools(toolWhitelist)
+        const res = await reviewAgent.chat(userPrompt, undefined, systemPrompt)
+        registry.clearFilter()
+        
+        return res.response
+      },
+      {
+        onReviewComplete: callbacks?.onReviewComplete,
+        onReviewError: callbacks?.onReviewError
+      }
+    )
+  }
+
+  private syncBundledSkillsIfNeeded(): void {
+    try {
+      const manifest = readManifest()
+      const manifestKeys = Object.keys(manifest)
+      
+      // First run if manifest empty or doesn't exist
+      if (manifestKeys.length === 0) {
+        console.log('[Agent] First run detected, syncing bundled skills...')
+        const result = syncBundledSkills()
+        console.log(`[Agent] Bundled skills synced: ${result.added.length} added, ${result.updated.length} updated, ${result.skipped.length} skipped`)
+      }
+    } catch (err) {
+      console.error('[Agent] Failed to sync bundled skills:', err)
+    }
   }
 }

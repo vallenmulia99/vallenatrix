@@ -59,6 +59,14 @@ const labelFontSize = document.getElementById('label-font-size-val') as HTMLSpan
 const btnFontDec = document.getElementById('btn-font-dec') as HTMLButtonElement
 const btnFontInc = document.getElementById('btn-font-inc') as HTMLButtonElement
 const btnFontReset = document.getElementById('btn-font-reset') as HTMLButtonElement
+const btnSaveSettings = document.getElementById('btn-save-settings') as HTMLButtonElement
+const saveNotification = document.getElementById('save-notification') as HTMLDivElement
+
+// Agent color pickers
+const colorToolPreparing = document.getElementById('setting-color-tool-preparing') as HTMLInputElement
+const colorToolSuccess = document.getElementById('setting-color-tool-success') as HTMLInputElement
+const colorAgentResponse = document.getElementById('setting-color-agent-response') as HTMLInputElement
+const colorError = document.getElementById('setting-color-error') as HTMLInputElement
 
 // Chat input elements
 const chatInput = document.getElementById('chat-input') as HTMLInputElement
@@ -430,28 +438,37 @@ selBgFit.addEventListener('change', async () => {
   await window.api.saveConfig({ background: activeConfig.background })
 })
 
-sliderDim.addEventListener('input', async () => {
+// BUG-20: Debounce config saves (avoid writing to disk on every slider input)
+let saveConfigTimeout: NodeJS.Timeout | null = null
+function debouncedSaveConfig(updates: any, delay = 500) {
+  if (saveConfigTimeout) clearTimeout(saveConfigTimeout)
+  saveConfigTimeout = setTimeout(() => {
+    window.api.saveConfig(updates)
+  }, delay)
+}
+
+sliderDim.addEventListener('input', () => {
   const val = Number(sliderDim.value) / 100
   labelDim.textContent = `${sliderDim.value}%`
   activeConfig.background.dim = val
   applyBackground()
-  await window.api.saveConfig({ background: activeConfig.background })
+  debouncedSaveConfig({ background: activeConfig.background })
 })
 
-sliderMediaOpacity.addEventListener('input', async () => {
+sliderMediaOpacity.addEventListener('input', () => {
   const val = Number(sliderMediaOpacity.value) / 100
   labelMediaOpacity.textContent = `${sliderMediaOpacity.value}%`
   activeConfig.background.opacity = val
   applyBackground()
-  await window.api.saveConfig({ background: activeConfig.background })
+  debouncedSaveConfig({ background: activeConfig.background })
 })
 
-sliderWinOpacity.addEventListener('input', async () => {
+sliderWinOpacity.addEventListener('input', () => {
   const val = Number(sliderWinOpacity.value) / 100
   labelWinOpacity.textContent = `${sliderWinOpacity.value}%`
   activeConfig.windowOpacity = val
   applyBackground()
-  await window.api.saveConfig({ windowOpacity: val })
+  debouncedSaveConfig({ windowOpacity: val })
 })
 
 sliderBlur.addEventListener('input', async () => {
@@ -486,6 +503,78 @@ sliderPetScale.addEventListener('input', () => {
 btnFontDec.addEventListener('click', () => setFontSize(activeConfig.terminal.fontSize - 1))
 btnFontInc.addEventListener('click', () => setFontSize(activeConfig.terminal.fontSize + 1))
 btnFontReset.addEventListener('click', () => setFontSize(14))
+
+// Agent color pickers
+function applyAgentColors() {
+  document.documentElement.style.setProperty('--color-tool-preparing', colorToolPreparing.value)
+  document.documentElement.style.setProperty('--color-tool-success', colorToolSuccess.value)
+  document.documentElement.style.setProperty('--color-agent-response', colorAgentResponse.value)
+  document.documentElement.style.setProperty('--color-error', colorError.value)
+}
+
+function saveAgentColors() {
+  localStorage.setItem('agent-colors', JSON.stringify({
+    toolPreparing: colorToolPreparing.value,
+    toolSuccess: colorToolSuccess.value,
+    agentResponse: colorAgentResponse.value,
+    error: colorError.value
+  }))
+}
+
+function loadAgentColors() {
+  const saved = localStorage.getItem('agent-colors')
+  if (saved) {
+    const colors = JSON.parse(saved)
+    colorToolPreparing.value = colors.toolPreparing || '#9ccfd8'
+    colorToolSuccess.value = colors.toolSuccess || '#a3be8c'
+    colorAgentResponse.value = colors.agentResponse || '#e0def4'
+    colorError.value = colors.error || '#eb6f92'
+  }
+  applyAgentColors()
+}
+
+colorToolPreparing.addEventListener('input', () => {
+  applyAgentColors()
+  saveAgentColors()
+})
+
+colorToolSuccess.addEventListener('input', () => {
+  applyAgentColors()
+  saveAgentColors()
+})
+
+colorAgentResponse.addEventListener('input', () => {
+  applyAgentColors()
+  saveAgentColors()
+})
+
+colorError.addEventListener('input', () => {
+  applyAgentColors()
+  saveAgentColors()
+})
+
+// Save settings button
+btnSaveSettings.addEventListener('click', () => {
+  saveAgentColors()
+  
+  // Save current model selection
+  if (modelSelect.value) {
+    localStorage.setItem('last-selected-model', modelSelect.value)
+  }
+  
+  // Show notification
+  saveNotification.style.display = 'block'
+  setTimeout(() => {
+    saveNotification.style.display = 'none'
+  }, 2000)
+})
+
+// Model select: persist selection
+modelSelect.addEventListener('change', () => {
+  if (modelSelect.value) {
+    localStorage.setItem('last-selected-model', modelSelect.value)
+  }
+})
 
 btnChooseFile.addEventListener('click', async () => {
   const result = await window.api.selectMedia()
@@ -595,8 +684,16 @@ async function sendChatMessage() {
       const topBar = `\x1b[36m╭─ ☤ Vallenatrix ${'─'.repeat(topFill)}╮\x1b[0m`
       const botBar = `\x1b[36m╰${'─'.repeat(Math.max(0, boxWidth - 2))}╯\x1b[0m`
       term.writeln(`\r\n${topBar}`)
+      
+      // Use custom agent response color
+      const agentColor = colorAgentResponse.value
+      const r = parseInt(agentColor.slice(1, 3), 16)
+      const g = parseInt(agentColor.slice(3, 5), 16)
+      const b = parseInt(agentColor.slice(5, 7), 16)
+      const colorCode = `\x1b[38;2;${r};${g};${b}m`
+      
       for (const line of res.response.split('\n')) {
-        term.writeln(line)
+        term.writeln(`${colorCode}${line}\x1b[0m`)
       }
       term.writeln(`${botBar}\r\n`)
       if (res.telemetry) {
@@ -659,6 +756,8 @@ window.api.onAgentStatus((status) => {
       term.writeln(line)
     }
     statusProgress.textContent = 'Tool completed'
+  } else if (status.type === 'review_complete') {
+    term.writeln(`\x1b[36m${status.message}\x1b[0m`)
   }
 })
 
@@ -791,6 +890,23 @@ async function init(): Promise<void> {
   term.options.lineHeight = activeConfig.terminal.lineHeight
   term.options.cursorBlink = activeConfig.terminal.cursorBlink
   term.options.cursorStyle = activeConfig.terminal.cursorStyle
+
+  // Load agent colors
+  loadAgentColors()
+
+  // Restore last selected model
+  const lastModel = localStorage.getItem('last-selected-model')
+  if (lastModel && modelSelect) {
+    // Wait a bit for model list to populate
+    setTimeout(() => {
+      for (let i = 0; i < modelSelect.options.length; i++) {
+        if (modelSelect.options[i].value === lastModel) {
+          modelSelect.selectedIndex = i
+          break
+        }
+      }
+    }, 500)
+  }
 
   applyBackground()
   updateSettingsForm()

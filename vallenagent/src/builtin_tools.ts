@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, rmSync } from 'fs'
 import { resolve, join, dirname, relative, isAbsolute } from 'path'
 import { exec, execFile, spawn } from 'child_process'
 import { homedir } from 'os'
@@ -1230,12 +1230,18 @@ export function registerBuiltinTools(
           const exitCode = toExitCode(err)
           const timedOut = err?.killed || err?.signal === 'SIGTERM'
           
+          let hint: string | undefined = undefined
+          if (rawOutput.includes('No module named') || rawOutput.includes('not defined')) {
+            hint = 'Browser automation requires playwright. Use web_search and web_extract for web tasks.'
+          }
+
           resolveResult(JSON.stringify({
             exit_code: exitCode,
             stdout: output,
             truncated,
             timed_out: timedOut,
-            error: err ? err.message : null
+            error: err ? err.message : null,
+            ...(hint ? { hint } : {})
           }))
         })
       })
@@ -1325,6 +1331,94 @@ export function registerBuiltinTools(
     })
   }
 
+  // 17. skills_list
+  const skillsListSchema: ToolSchema = {
+    name: 'skills_list',
+    description: 'List available modular skills with their name, category, and description. Use skill_view(name) to load full content.',
+    parameters: {
+      type: 'object',
+      properties: {
+        category: { type: 'string', description: 'Optional category filter to narrow results' }
+      }
+    }
+  }
+
+  registry.register({
+    name: 'skills_list',
+    schema: skillsListSchema,
+    toolset: 'skills',
+    handler: async (args, context) => {
+      const loader = (context as any)?.agent?.skillLoader || skillLoader
+      if (!loader) {
+        return JSON.stringify([])
+      }
+      const category = args.category ? String(args.category).trim() : undefined
+      const skills = category ? loader.listByCategory(category) : loader.list()
+      const list = skills.map((s: any) => ({
+        name: s.name,
+        description: s.metadata?.description || '',
+        category: s.metadata?.category || 'general'
+      }))
+      return JSON.stringify(list)
+    }
+  })
+
+  // 18. skill_view
+  const skillViewSchema: ToolSchema = {
+    name: 'skill_view',
+    description: 'Load full instructions and content of a skill, or access its linked files (references, templates, scripts). First call returns SKILL.md content plus linked_files list. To access linked file, call with file_path parameter.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The skill name (see skills_list to browse available skills)' },
+        file_path: { type: 'string', description: 'Optional relative path to a linked file within the skill (e.g., references/api.md)' }
+      },
+      required: ['name']
+    }
+  }
+
+  registry.register({
+    name: 'skill_view',
+    schema: skillViewSchema,
+    toolset: 'skills',
+    handler: async (args, context) => {
+      const loader = (context as any)?.agent?.skillLoader || skillLoader
+      const name = String(args.name || '').trim()
+      if (!name) {
+        return JSON.stringify({ error: 'Skill name is required' })
+      }
+      if (!loader) {
+        return JSON.stringify({ error: 'Skill loader not available' })
+      }
+      const skill = loader.get(name)
+      if (!skill) {
+        return JSON.stringify({ error: `Skill '${name}' not found. Use skills_list to see available skills.` })
+      }
+
+      const filePath = args.file_path ? String(args.file_path).trim() : ''
+      if (filePath) {
+        const skillBaseDir = dirname(skill.path)
+        const linkedFullPath = join(skillBaseDir, filePath)
+        if (!existsSync(linkedFullPath)) {
+          return JSON.stringify({ error: `Linked file '${filePath}' not found in skill '${name}'` })
+        }
+        try {
+          const content = readFileSync(linkedFullPath, 'utf-8')
+          return JSON.stringify({ name: skill.name, file_path: filePath, content })
+        } catch (err: any) {
+          return JSON.stringify({ error: `Failed to read linked file: ${err.message}` })
+        }
+      }
+
+      return JSON.stringify({
+        name: skill.name,
+        description: skill.metadata?.description || '',
+        category: skill.metadata?.category || 'general',
+        content: skill.content,
+        linked_files: skill.linkedFiles || {}
+      })
+    }
+  })
 
   // 19. skill_manage - Install/uninstall/update skills from hub
   const skillManageSchema: ToolSchema = {
@@ -1367,7 +1461,61 @@ export function registerBuiltinTools(
     name: 'skill_manage',
     schema: skillManageSchema,
     toolset: 'skills',
-    handler: async (args) => {
+    handler: async (args, context) => {
+      // Hermes-style atomic batch operations
+      if (args.operations && Array.isArray(args.operations)) {
+        const ops = args.operations
+        const loader = (context as any)?.agent?.skillLoader || skillLoader
+        const localDir = join(process.cwd(), '.vallenatrix', 'skills')
+        const vallenHome = process.env.VALLENATRIX_HOME || join(homedir(), '.vallenatrix')
+        const targetBaseDir = existsSync(localDir) ? localDir : join(vallenHome, 'skills')
+
+        const results: any[] = []
+        for (const op of ops) {
+          const opAction = op.action
+          const name = String(op.name || '').trim()
+          if (!name) throw new Error('Skill name is required for operation')
+
+          if (opAction === 'create') {
+            const category = op.category ? String(op.category).trim() : 'custom'
+            const skillDir = join(targetBaseDir, category, name)
+            mkdirSync(skillDir, { recursive: true })
+            const skillPath = join(skillDir, 'SKILL.md')
+            const content = String(op.content || `---\nname: ${name}\ndescription: Custom skill\ncategory: ${category}\n---\n# ${name}\n`)
+            writeFileSync(skillPath, content, 'utf-8')
+            results.push({ action: 'create', name, path: skillPath, status: 'created' })
+          } else if (opAction === 'patch') {
+            const skill = loader?.get(name)
+            if (!skill) throw new Error(`Skill '${name}' not found for patch`)
+            const currentContent = readFileSync(skill.path, 'utf-8')
+            const patched = fuzzyReplace(currentContent, op.old_string || '', op.new_string || '', false)
+            writeFileSync(skill.path, patched.content, 'utf-8')
+            results.push({ action: 'patch', name, strategy: patched.strategy, status: 'patched' })
+          } else if (opAction === 'delete') {
+            const skill = loader?.get(name)
+            if (!skill) throw new Error(`Skill '${name}' not found for delete`)
+            rmSync(dirname(skill.path), { recursive: true, force: true })
+            results.push({ action: 'delete', name, status: 'deleted' })
+          } else if (opAction === 'write_file') {
+            const skill = loader?.get(name)
+            if (!skill) throw new Error(`Skill '${name}' not found`)
+            const filePath = join(dirname(skill.path), op.file_path)
+            mkdirSync(dirname(filePath), { recursive: true })
+            writeFileSync(filePath, String(op.content || ''), 'utf-8')
+            results.push({ action: 'write_file', name, file_path: op.file_path, status: 'written' })
+          } else if (opAction === 'remove_file') {
+            const skill = loader?.get(name)
+            if (!skill) throw new Error(`Skill '${name}' not found`)
+            const filePath = join(dirname(skill.path), op.file_path)
+            if (existsSync(filePath)) rmSync(filePath, { force: true })
+            results.push({ action: 'remove_file', name, file_path: op.file_path, status: 'removed' })
+          }
+        }
+
+        loader?.load?.()
+        return JSON.stringify({ success: true, message: `Applied ${ops.length} skill operations`, results })
+      }
+
       const action = String(args.action || 'search')
 
       try {

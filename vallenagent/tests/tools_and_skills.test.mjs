@@ -42,9 +42,19 @@ test('Fuzzy Replace - 9 strategies', async (t) => {
 })
 
 test('Core Tools execution via registry', async (t) => {
-  const { mkdtempSync } = await import('node:fs')
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const testDir = mkdtempSync(join(tmpdir(), 'vallenagent-test-'))
+  const vallenSkillDir = join(testDir, 'vallenatrix')
+  mkdirSync(vallenSkillDir, { recursive: true })
+  writeFileSync(join(vallenSkillDir, 'SKILL.md'), `---
+name: vallenatrix
+description: Vallenatrix terminal skill
+category: system
+---
+# Vallenatrix
+A transparent AI terminal emulator.
+`)
   const loader = new SkillLoader([testDir])
   loader.load()
   registerBuiltinTools(loader, undefined, undefined, undefined, false)

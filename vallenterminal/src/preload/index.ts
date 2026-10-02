@@ -63,6 +63,10 @@ const api = {
     return ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_OPEN_EXTERNAL, url)
   },
 
+  getBanner: (): Promise<any> => {
+    return ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_BANNER)
+  },
+
   onWindowStateChange: (callback: (state: WindowState) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: WindowState): void => callback(state)
     ipcRenderer.on(IPC_CHANNELS.WINDOW_STATE_CHANGE, listener)

@@ -6,6 +6,7 @@ import { PtyManager } from './pty'
 import { ConfigManager } from './config'
 import { registerMediaProtocol, selectMediaFile } from './media'
 import { handleSkillsCommand } from './skills_commands'
+import { getStartupPayload } from './banner'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -188,6 +189,10 @@ function setupIpc(): void {
       // Invalid URL
     }
     return false
+  })
+
+  ipcMain.handle(IPC_CHANNELS.SYSTEM_BANNER, async () => {
+    return getStartupPayload(getAgentInstance())
   })
 
   let agentInstance: any = null
@@ -395,30 +400,30 @@ function setupIpc(): void {
 
       if (trimmed === '/pty' || trimmed === '/sh') {
         return {
-          response: `\x1b[32m✔ Switching to Direct Shell Mode (PTY).\x1b[0m\nKetik langsung di terminal untuk bash/sh.\nTekan \x1b[33mCtrl+\`\x1b[0m atau \x1b[33mCtrl+T\x1b[0m untuk kembali ke AI Chat Mode.`,
+          response: `\x1b[32m✔ Direct Shell Mode Active (PTY).\x1b[0m\nDirect bash shell enabled.\nPress \x1b[33mCtrl+\`\x1b[0m or \x1b[33mCtrl+T\x1b[0m to return to AI Chat Mode.`,
           togglePty: true
         }
       }
 
       if (trimmed === '/help') {
         return {
-          response: `\x1b[36m[Vallenatrix AI Agent Commands]\x1b[0m
-/model <name>  - Ganti model AI aktif (via 9router)
-/token <key>   - Set & simpan token API 9router
-/tools         - Tampilkan 12 toolset & tools bawaan
-/skills        - Lihat 59 loaded modular skills
-/themes        - Daftar semua tema warna UI
-/theme <name>  - Ganti tema warna UI secara instan
-/stats         - Telemetry sesi, model, & context stats
-/memory        - Lihat catatan memori & profil user
-/todos         - Lihat active task list
-/sessions      - Daftar riwayat percakapan tersimpan
-/resume <id>   - Lanjutkan percakapan sebelumnya
-/stop          - Hentikan turn agent yang sedang jalan
-/pty | /sh     - Masuk ke direct terminal bash (hotkey: Ctrl+\` / Ctrl+T)
-/new | /reset  - Mulai sesi percakapan baru
-/clear         - Bersihkan layar terminal
-/help          - Tampilkan panduan ini`
+          response: `\x1b[36m[Vallenatrix Autonomous AI Terminal Commands]\x1b[0m
+/model <name>  - Switch active AI model (e.g. /model ag/gemini-3.8-flash-medium)
+/token <key>   - Connect and persist 9router API key
+/tools         - Inspect 16 registered tools across 12 toolsets
+/skills        - Manage modular skills (search, install, toggle)
+/themes        - List available UI color themes
+/theme <name>  - Switch UI theme instantly
+/stats         - Telemetry, context usage, and token latency
+/memory        - Inspect persistent memory and user profile
+/todos         - View active task list
+/sessions      - List saved chat sessions
+/resume <id>   - Resume a previous chat session
+/stop          - Interrupt active running agent turn
+/pty | /sh     - Enter direct PTY shell mode (hotkey: Ctrl+\` / Ctrl+T)
+/new | /reset  - Start fresh conversation context
+/clear         - Clear terminal display
+/help          - Show this command reference`
         }
       }
 

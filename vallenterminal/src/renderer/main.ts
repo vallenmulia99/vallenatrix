@@ -113,6 +113,7 @@ requestAnimationFrame(() => {
 })
 
 let isDirectPtyMode = false
+let hasEnteredPty = false
 
 function togglePtyMode(force?: boolean): void {
   isDirectPtyMode = force !== undefined ? force : !isDirectPtyMode
@@ -125,6 +126,11 @@ function togglePtyMode(force?: boolean): void {
     }
     statusProgress.textContent = 'PTY Shell Active'
     term.focus()
+    if (!hasEnteredPty) {
+      hasEnteredPty = true
+      term.write('\r\n')
+      window.api.sendTerminalData('\r')
+    }
   } else {
     if (statusSymbol) {
       statusSymbol.textContent = '☤'
@@ -144,7 +150,9 @@ term.onData((data) => {
 })
 
 window.api.onTerminalData((data) => {
-  term.write(data)
+  if (isDirectPtyMode) {
+    term.write(data)
+  }
 })
 
 const titlebarEl = document.getElementById('titlebar') as HTMLDivElement
@@ -919,6 +927,57 @@ async function init(): Promise<void> {
 
   fitAddon.fit()
   window.api.resizeTerminal(term.cols, term.rows)
+
+  // Real startup loading sequence & health checks
+  try {
+    statusProgress.textContent = 'Booting Vallenatrix...'
+    const payload = await window.api.getBanner()
+
+    term.clear()
+
+    if (typeof payload === 'string') {
+      for (const line of payload.split('\n')) {
+        term.writeln(line)
+      }
+    } else if (payload) {
+      // 1. Render ASCII banner
+      if (payload.asciiBanner) {
+        for (const line of payload.asciiBanner.split('\n')) {
+          term.writeln(line)
+        }
+        term.writeln('')
+      }
+
+      // 2. Stream health checks with step progression
+      if (payload.diagHeader && Array.isArray(payload.healthChecks)) {
+        term.writeln(payload.diagHeader)
+
+        for (const item of payload.healthChecks) {
+          statusProgress.textContent = `Verifying ${item.title}...`
+          term.writeln(item.formattedRow)
+          await new Promise((r) => setTimeout(r, 60))
+        }
+
+        term.writeln(payload.diagFooter)
+        term.writeln('')
+      }
+
+      // 3. Render Quick Commands guide box
+      if (Array.isArray(payload.guideBox)) {
+        for (const line of payload.guideBox) {
+          term.writeln(line)
+        }
+        term.writeln('')
+      }
+    }
+
+    statusProgress.textContent = 'Ready'
+    chatInput.focus()
+  } catch (err) {
+    console.error('Failed to load startup banner & diagnostics:', err)
+    statusProgress.textContent = 'Ready'
+    chatInput.focus()
+  }
 }
 
 init().catch(console.error)

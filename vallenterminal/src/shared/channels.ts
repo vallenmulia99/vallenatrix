@@ -18,6 +18,7 @@ export const IPC_CHANNELS = {
 
   MEDIA_SELECT: 'media:select',
   SYSTEM_OPEN_EXTERNAL: 'system:open-external',
+  SYSTEM_BANNER: 'system:banner',
 
   AGENT_CHAT: 'agent:chat',
   AGENT_STATUS: 'agent:status'

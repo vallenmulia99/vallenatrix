@@ -50,6 +50,7 @@ export interface AgentCallbacks {
   }) => void
   onReviewComplete?: (summary: string) => void
   onReviewError?: (error: string) => void
+  onChunk?: (chunk: string) => void
 }
 
 function pruneOldToolResults(messages: Message[], protectTailCount: number = 8): Message[] {
@@ -70,6 +71,40 @@ function pruneOldToolResults(messages: Message[], protectTailCount: number = 8):
     }
     return m
   })
+}
+
+function compactHistory(history: Message[], keepTailCount: number = 8): boolean {
+  if (history.length <= keepTailCount + 2) return false
+  const startIndex = 1 // preserve system prompt at index 0
+  const endIndex = history.length - keepTailCount
+
+  // Extract key summary points from old messages
+  const oldTurns = history.slice(startIndex, endIndex)
+  const summaries: string[] = []
+  
+  for (const m of oldTurns) {
+    if (m.role === 'user') {
+      const txt = (m.content || '').slice(0, 120).replace(/\n/g, ' ')
+      summaries.push(`User: "${txt}"`)
+    } else if (m.role === 'assistant' && m.content) {
+      const txt = m.content.slice(0, 120).replace(/\n/g, ' ')
+      summaries.push(`Agent: "${txt}"`)
+    } else if (m.role === 'tool' && m.name) {
+      summaries.push(`Tool: ${m.name}`)
+    }
+  }
+
+  const compactedMessage: Message = {
+    role: 'user',
+    content: `[Previous conversation summary (${oldTurns.length} messages compacted):\n${summaries.slice(0, 15).join('\n')}\n(Continue task with full awareness of above context)]`
+  }
+  const ackMessage: Message = {
+    role: 'assistant',
+    content: 'Understood. I retain the summarized context and will proceed with the task.'
+  }
+
+  history.splice(startIndex, endIndex - startIndex, compactedMessage, ackMessage)
+  return true
 }
 
 export class AIAgent {
@@ -195,6 +230,9 @@ export class AIAgent {
     // BUG-18: Create AbortController for this turn
     this.abortController = new AbortController()
 
+    // Save history length before this turn starts (for BUG-08 clean rollback)
+    const historyLenBeforeTurn = this.conversationHistory.length
+
     // Rebuild system prompt every turn (fresh context)
     if (this.conversationHistory.length === 0) {
       const initialSystemPrompt = systemPrompt || this.buildSystemPrompt()
@@ -237,13 +275,20 @@ export class AIAgent {
 
       callbacks?.onThinking?.(`Running iteration ${iterations}...`)
 
+      // Auto-compaction if conversation history grows long
+      if (this.conversationHistory.length > 20) {
+        compactHistory(this.conversationHistory, 8)
+      }
+
       const messages = pruneOldToolResults(this.conversationHistory, 8)
       const tools = registry.getOpenAISchemas()
       const response = await this.provider.chat({
         model: this.provider.model,
         messages,
         tools: tools.length > 0 ? tools : undefined,
-        signal: this.abortController?.signal  // BUG-18: Pass abort signal
+        signal: this.abortController?.signal,  // BUG-18: Pass abort signal
+        stream: Boolean(callbacks?.onChunk),
+        onChunk: callbacks?.onChunk
       })
 
       const choice = response.choices[0]
@@ -435,11 +480,11 @@ export class AIAgent {
     }
   } catch (err: any) {
     // BUG-08: Rollback user message if no progress made
-    const progressMade = this.conversationHistory.length > startHistoryLen + 1
+    const progressMade = this.conversationHistory.some((m, idx) => idx >= startHistoryLen && m.role === 'assistant')
     
     if (!progressMade) {
-      // No assistant/tool messages added, rollback the user message
-      while (this.conversationHistory.length > startHistoryLen) {
+      // No assistant/tool messages added, rollback to before the turn started
+      while (this.conversationHistory.length > historyLenBeforeTurn) {
         this.conversationHistory.pop()
       }
     }

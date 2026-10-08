@@ -1,6 +1,7 @@
-import { dialog, BrowserWindow, protocol, net } from 'electron'
+import type { BrowserWindow } from 'electron'
+import { dialog, protocol, net } from 'electron'
 import { extname, isAbsolute } from 'path'
-import { existsSync, statSync } from 'fs'
+import { existsSync, lstatSync, openSync, readSync, closeSync } from 'fs'
 import { pathToFileURL } from 'url'
 import { MediaSelectResult } from '../shared/types'
 
@@ -13,22 +14,46 @@ export function isAllowedMediaFile(filePath: string): { valid: boolean; type?: '
   if (!existsSync(filePath)) return { valid: false }
 
   try {
-    const stat = statSync(filePath)
+    const stat = lstatSync(filePath)
     if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return { valid: false }
   } catch {
     return { valid: false }
   }
 
   const ext = extname(filePath).toLowerCase()
-  if (ALLOWED_IMAGE_EXTS.has(ext)) return { valid: true, type: 'image' }
-  if (ALLOWED_VIDEO_EXTS.has(ext)) return { valid: true, type: 'video' }
+  const type = ALLOWED_IMAGE_EXTS.has(ext) ? 'image' : ALLOWED_VIDEO_EXTS.has(ext) ? 'video' : undefined
+  if (!type) return { valid: false }
 
-  return { valid: false }
+  const signatures: Record<string, (bytes: Buffer) => boolean> = {
+    '.png': (b) => b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
+    '.jpg': (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+    '.jpeg': (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+    '.gif': (b) => b.subarray(0, 6).toString('ascii').match(/^GIF8[79]a$/) !== null,
+    '.webp': (b) => b.length >= 12 && b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP',
+    '.mp4': (b) => b.length >= 8 && b.toString('ascii', 4, 8) === 'ftyp',
+    '.webm': (b) => b.length >= 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3
+  }
+  let fd: number | undefined
+  try {
+    fd = openSync(filePath, 'r')
+    const header = Buffer.alloc(12)
+    const bytesRead = readSync(fd, header, 0, header.length, 0)
+    if (!signatures[ext](header.subarray(0, bytesRead))) return { valid: false }
+  } catch {
+    return { valid: false }
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+  }
+
+  return { valid: true, type }
 }
 
 export function registerMediaProtocol(): void {
   protocol.handle('vallen-media', async (request) => {
     try {
+      if (!request.url.startsWith('vallen-media://')) {
+        return new Response('Forbidden or invalid media file', { status: 403 })
+      }
       const url = new URL(request.url)
       // Path after host: pathname may be /home/user/...
       let decodedPath = decodeURIComponent(url.pathname)

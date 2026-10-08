@@ -60,3 +60,17 @@ test('skill_manage blocks linked file traversal', async (t) => {
   assert.ok(result.error)
   assert.equal(existsSync(join(base, 'escaped.txt')), false)
 })
+
+test('skill_manage delete does not remove skills root', async (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'vallenatrix-skill-delete-'))
+  t.after(() => rmSync(base, { recursive: true, force: true }))
+  const skillsDir = join(base, 'skills')
+  mkdirSync(skillsDir)
+  writeFileSync(join(skillsDir, 'SKILL.md'), '---\nname: root\ndescription: root\n---\n')
+  const loader = new SkillLoader([skillsDir])
+  loader.load()
+  registerBuiltinTools(loader, new MemoryStore(join(base, 'memory')), new TodoStore(), async () => '', false)
+  const result = JSON.parse(await registry.execute('skill_manage', { operations: [{ action: 'delete', name: 'root' }] }))
+  assert.ok(result.error)
+  assert.equal(existsSync(skillsDir), true)
+})

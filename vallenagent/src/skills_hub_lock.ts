@@ -58,14 +58,14 @@ export class HubLock {
    * Get entry by skill name
    */
   get(name: string): LockEntry | undefined {
-    return this.data.skills[name]
+    return Object.hasOwn(this.data.skills, name) ? this.data.skills[name] : undefined
   }
 
   /**
    * Check if skill is installed
    */
   has(name: string): boolean {
-    return name in this.data.skills
+    return Object.hasOwn(this.data.skills, name)
   }
 
   /**

@@ -6,6 +6,7 @@ BIN_SOURCE="$SCRIPT_DIR/bin/vallenatrix"
 TARGET_DIR="$HOME/.local/bin"
 TARGET_LINK="$TARGET_DIR/vallenatrix"
 CONFIG_DIR="$HOME/.config/vallenterminal"
+AGENT_DATA_DIR="$HOME/.vallenatrix"
 
 show_help() {
   cat << EOF
@@ -36,6 +37,7 @@ uninstall_action() {
 purge_action() {
   echo "PERINGATAN: Opsi --purge akan menghapus symlink dan seluruh data konfigurasi serta tema kustom di:"
   echo "  $CONFIG_DIR"
+  echo "  $AGENT_DATA_DIR (agent config, sessions, memories, API keys)"
   read -r -p "Ketik 'YA' untuk mengonfirmasi penghapusan permanen: " confirmation
   if [ "$confirmation" != "YA" ]; then
     echo "Penghapusan dibatalkan."
@@ -49,6 +51,12 @@ purge_action() {
     echo "Berhasil menghapus direktori konfigurasi: $CONFIG_DIR"
   else
     echo "Direktori konfigurasi tidak ditemukan."
+  fi
+  if [ -d "$AGENT_DATA_DIR" ]; then
+    rm -rf "$AGENT_DATA_DIR"
+    echo "Berhasil menghapus direktori data agent: $AGENT_DATA_DIR"
+  else
+    echo "Direktori data agent tidak ditemukan."
   fi
   echo "Purge selesai."
 }

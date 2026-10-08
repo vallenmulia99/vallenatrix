@@ -128,8 +128,10 @@ function setupIpc(): void {
     }
   })
 
-  ipcMain.on(IPC_CHANNELS.TERMINAL_RESIZE, (_event, { cols, rows }: { cols: number; rows: number }) => {
-    if (typeof cols === 'number' && typeof rows === 'number') {
+  ipcMain.on(IPC_CHANNELS.TERMINAL_RESIZE, (_event, size: { cols?: unknown; rows?: unknown } | null) => {
+    const cols = size?.cols
+    const rows = size?.rows
+    if (typeof cols === 'number' && Number.isFinite(cols) && typeof rows === 'number' && Number.isFinite(rows)) {
       ptyManager.resize(cols, rows)
     }
   })
@@ -254,19 +256,8 @@ function setupIpc(): void {
         }
       }
 
-      if (trimmed === '/skills') {
-        const skills = agent.skillLoader.list()
-        const byCat: Record<string, string[]> = {}
-        for (const s of skills) {
-          const cat = s.metadata.category || 'general'
-          if (!byCat[cat]) byCat[cat] = []
-          byCat[cat].push(s.name)
-        }
-        const lines = ['\x1b[36m[Available Skills]\x1b[0m']
-        for (const [cat, sks] of Object.entries(byCat)) {
-          lines.push(`\x1b[33m${cat}\x1b[0m: ${sks.join(', ')}`)
-        }
-        return { response: lines.join('\n') }
+      if (trimmed === '/skills' || trimmed.startsWith('/skills ')) {
+        return await handleSkillsCommand(trimmed, agent, __dirname)
       }
 
       if (trimmed === '/tools') {

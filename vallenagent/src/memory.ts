@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, renameSync, rmSync } from 'fs'
 import { join } from 'path'
 import { getVallenatrixHome } from './config'
 
@@ -11,6 +11,7 @@ export interface MemoryOperation {
 }
 
 export class MemoryStore {
+  private static locks = new Map<string, Promise<void>>()
   private baseDir: string
   private memoryLimit: number = 2200
   private userLimit: number = 1375
@@ -22,12 +23,26 @@ export class MemoryStore {
 
   private ensureDir(): void {
     if (!existsSync(this.baseDir)) {
-      mkdirSync(this.baseDir, { recursive: true })
+      mkdirSync(this.baseDir, { recursive: true, mode: 0o700 })
     }
+    chmodSync(this.baseDir, 0o700)
   }
 
   private getFilePath(target: 'memory' | 'user'): string {
     return join(this.baseDir, target === 'user' ? 'USER.md' : 'MEMORY.md')
+  }
+
+  private async locked<T>(fn: () => T): Promise<T> {
+    const key = this.baseDir
+    const previous = MemoryStore.locks.get(key) || Promise.resolve()
+    let release!: () => void
+    const current = new Promise<void>(resolve => { release = resolve })
+    MemoryStore.locks.set(key, current)
+    await previous
+    try { return fn() } finally {
+      release()
+      if (MemoryStore.locks.get(key) === current) MemoryStore.locks.delete(key)
+    }
   }
 
   private readEntries(target: 'memory' | 'user'): string[] {
@@ -58,27 +73,29 @@ export class MemoryStore {
 
     try {
       this.ensureDir()
-      writeFileSync(file, joined, 'utf-8')
+      const temp = `${file}.${process.pid}.${Date.now()}.tmp`
+      writeFileSync(temp, joined, { encoding: 'utf-8', mode: 0o600, flag: 'wx' })
+      chmodSync(temp, 0o600)
+      renameSync(temp, file)
       return { success: true, chars: joined.length, limit }
     } catch (err: any) {
       return { success: false, chars: joined.length, limit, error: err.message || 'Write failed' }
     }
   }
 
-  add(target: 'memory' | 'user', content: string): Record<string, any> {
+  async add(target: 'memory' | 'user', content: string): Promise<Record<string, any>> {
     const trimmed = content.trim()
     if (!trimmed) return { error: 'Content cannot be empty' }
-    const entries = this.readEntries(target)
-    entries.push(trimmed)
-    return this.writeEntries(target, entries)
+    return this.locked(() => { const entries = this.readEntries(target); entries.push(trimmed); return this.writeEntries(target, entries) })
   }
 
-  replace(target: 'memory' | 'user', oldText: string, newContent: string): Record<string, any> {
+  async replace(target: 'memory' | 'user', oldText: string, newContent: string): Promise<Record<string, any>> {
     // BUG-13: Reject empty oldText
     if (!oldText.trim()) {
       return { error: 'old_text must not be empty for replace' }
     }
     
+    return this.locked(() => {
     const entries = this.readEntries(target)
     const matches = entries.filter(e => e.toLowerCase().includes(oldText.toLowerCase()))
     
@@ -92,14 +109,16 @@ export class MemoryStore {
     const idx = entries.findIndex(e => e.toLowerCase().includes(oldText.toLowerCase()))
     entries[idx] = newContent.trim()
     return this.writeEntries(target, entries)
+    })
   }
 
-  remove(target: 'memory' | 'user', oldText: string): Record<string, any> {
+  async remove(target: 'memory' | 'user', oldText: string): Promise<Record<string, any>> {
     // BUG-13: Reject empty oldText
     if (!oldText.trim()) {
       return { error: 'old_text must not be empty for remove' }
     }
     
+    return this.locked(() => {
     const entries = this.readEntries(target)
     const matches = entries.filter(e => e.toLowerCase().includes(oldText.toLowerCase()))
     
@@ -113,9 +132,14 @@ export class MemoryStore {
     const idx = entries.findIndex(e => e.toLowerCase().includes(oldText.toLowerCase()))
     entries.splice(idx, 1)
     return this.writeEntries(target, entries)
+    })
   }
 
-  batch(operations: MemoryOperation[], defaultTarget: 'memory' | 'user' = 'memory'): Record<string, any> {
+  async batch(operations: MemoryOperation[], defaultTarget: 'memory' | 'user' = 'memory'): Promise<Record<string, any>> {
+    return this.locked(() => this.batchLocked(operations, defaultTarget))
+  }
+
+  private batchLocked(operations: MemoryOperation[], defaultTarget: 'memory' | 'user'): Record<string, any> {
     const memoryEntries = [...this.readEntries('memory')]
     const userEntries = [...this.readEntries('user')]
 
@@ -128,6 +152,7 @@ export class MemoryStore {
 
       if (op.action === 'add') {
         if (content) list.push(content)
+        else return { error: 'content required for add in batch' }
       } else if (op.action === 'replace') {
         if (!oldText) {
           return { error: 'old_text required for replace in batch' }
@@ -136,7 +161,8 @@ export class MemoryStore {
         if (idx === -1) {
           return { error: `No entry matching '${oldText}' in ${target}` }
         }
-        if (content) list[idx] = content
+        if (!content) return { error: 'content required for replace in batch' }
+        list[idx] = content
       } else if (op.action === 'remove') {
         if (!oldText) {
           return { error: 'old_text required for remove in batch' }
@@ -160,10 +186,16 @@ export class MemoryStore {
       return { error: `Batch would exceed user limit: ${userChars}/${this.userLimit} chars` }
     }
 
+    const oldMem = [...this.readEntries('memory')]
+    const oldUser = [...this.readEntries('user')]
     const resMem = this.writeEntries('memory', memoryEntries)
     if (!resMem.success) return resMem
     const resUser = this.writeEntries('user', userEntries)
-    if (!resUser.success) return resUser
+    if (!resUser.success) {
+      this.writeEntries('memory', oldMem)
+      this.writeEntries('user', oldUser)
+      return resUser
+    }
 
     return {
       success: true,

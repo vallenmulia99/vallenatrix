@@ -20,7 +20,7 @@ export interface ToolSchema {
   }
 }
 
-export type ToolHandler = (args: Record<string, any>, context: ToolContext) => Promise<string>
+export type ToolHandler = (args: Record<string, any>, context: ToolContext, signal?: AbortSignal) => Promise<string>
 
 export interface ToolContext {
   sessionId?: string
@@ -73,13 +73,10 @@ class ToolRegistry {
     this.whitelist = null
   }
 
-  getSchemas(enabledToolsets: string[] = []): ToolSchema[] {
+  getSchemas(enabledToolsets: string[] = [], whitelist?: string[]): ToolSchema[] {
     let tools = this.list()
-    
-    // Apply whitelist if active
-    if (this.whitelist) {
-      tools = tools.filter(t => this.whitelist!.includes(t.name))
-    }
+    const allowedTools = whitelist ?? this.whitelist
+    if (allowedTools) tools = tools.filter(t => allowedTools.includes(t.name))
     
     if (enabledToolsets.length > 0) {
       tools = tools.filter(t => enabledToolsets.includes(t.toolset))
@@ -98,14 +95,15 @@ class ToolRegistry {
     return tools.map(t => t.schema)
   }
 
-  getOpenAISchemas(enabledToolsets: string[] = []): Array<{ type: 'function'; function: ToolSchema }> {
-    return this.getSchemas(enabledToolsets).map(s => ({
+  getOpenAISchemas(enabledToolsets: string[] = [], whitelist?: string[]): Array<{ type: 'function'; function: ToolSchema }> {
+    return this.getSchemas(enabledToolsets, whitelist).map(s => ({
       type: 'function',
       function: s
     }))
   }
 
-  async execute(name: string, args: Record<string, any>, context: ToolContext = {}): Promise<string> {
+  async execute(name: string, args: Record<string, any>, context: ToolContext = {}, whitelist?: string[], signal?: AbortSignal): Promise<string> {
+    if (whitelist && !whitelist.includes(name)) return JSON.stringify({ error: `Tool not allowed: ${name}` })
     const tool = this.tools.get(name)
     
     if (!tool) {
@@ -113,7 +111,7 @@ class ToolRegistry {
     }
     
     try {
-      return await tool.handler(args, context)
+      return await tool.handler(args, context, signal)
     } catch (err: any) {
       console.error(`[Tools] Error executing ${name}:`, err)
       return JSON.stringify({ error: err.message || 'Tool execution failed' })

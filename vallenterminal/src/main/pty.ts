@@ -49,23 +49,26 @@ export class PtyManager {
     onExit: (exitCode: number, signal?: number) => void
   ): IPty {
     this.kill()
+    let child: IPty
 
     const chosenShell = getValidShell(shell)
     const cwd = process.env.HOME || process.cwd()
 
-    this.ptyProcess = spawn(chosenShell, [], {
+    child = spawn(chosenShell, [], {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
       cwd,
-      env: process.env as Record<string, string>
+      env: Object.fromEntries(Object.entries(process.env).filter(([key, value]) => key !== 'LIBVA_DRIVER_NAME' && value !== undefined)) as Record<string, string>
     })
+    this.ptyProcess = child
 
-    this.ptyProcess.onData((data) => {
+    child.onData((data) => {
       onData(data)
     })
 
-    this.ptyProcess.onExit(({ exitCode, signal }) => {
+    child.onExit(({ exitCode, signal }) => {
+      if (this.ptyProcess !== child) return
       this.ptyProcess = null
       onExit(exitCode, signal)
     })

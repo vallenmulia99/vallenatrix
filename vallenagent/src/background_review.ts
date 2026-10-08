@@ -23,7 +23,7 @@ Be surgical. Only update when conversation revealed: wrong info in skill, missin
 
 const REVIEW_USER_PROMPT = `After reviewing this conversation, should any skill or memory be saved/updated?
 
-Analyze for:
+Analyze this conversation:
 1. Skills that were wrong/incomplete
 2. New pitfalls discovered
 3. User preferences stated
@@ -42,7 +42,7 @@ export async function spawnBackgroundReview(
       const toolWhitelist = ['skill_view', 'skills_list', 'skill_manage', 'memory', 'read_file', 'search_files']
       
       const summary = await agentFactory(
-        REVIEW_USER_PROMPT,
+        `${REVIEW_USER_PROMPT}\n\nConversation snapshot (JSON):\n${JSON.stringify(conversationSnapshot)}`,
         REVIEW_SYSTEM_PROMPT,
         toolWhitelist
       )

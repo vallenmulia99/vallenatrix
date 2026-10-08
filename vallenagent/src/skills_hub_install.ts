@@ -388,8 +388,12 @@ export function uninstallSkill(name: string): InstallResult {
     }
 
     // Resolve install path
-    const skillsDir = getSkillsDir()
-    const installPath = join(skillsDir, entry.install_path)
+    const skillsDir = resolve(getSkillsDir())
+    const installPath = resolve(skillsDir, entry.install_path)
+    if (!entry.install_path || installPath === skillsDir || !installPath.startsWith(skillsDir + sep)) {
+      throw new Error('Unsafe install path in skill lock')
+    }
+    if (isPathRedirect(installPath)) throw new Error('Install path cannot be a symlink')
 
     // Remove directory
     if (existsSync(installPath)) {

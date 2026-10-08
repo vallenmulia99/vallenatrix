@@ -53,3 +53,8 @@ test('BUG-03: empty old_string must throw', (t) => {
     fuzzyReplace('abc', '', 'X', false)
   }, /old_string must not be empty/)
 })
+
+test('fuzzy replacement rejects blocks with any mismatched middle line', () => {
+  const content = 'start()\\nimportant()\\nend()'
+  assert.throws(() => fuzzyReplace(content, 'start()\\nwrong()\\nend()', 'replacement'))
+})

@@ -2,13 +2,13 @@
   "name": "vallenterminal",
   "version": "0.1.0",
   "private": true,
-  "main": "dist/main/index.js",
+  "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev -c ./electron-vite.config.ts .",
     "build": "electron-vite build -c ./electron-vite.config.ts .",
     "start": "electron-vite preview -c ./electron-vite.config.ts .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/config-theme.test.mjs"
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@xterm/xterm": "^5.5.0",

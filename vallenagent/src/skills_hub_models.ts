@@ -97,6 +97,9 @@ export function validateCategory(category: string): string {
   }
   // No leading/trailing slashes
   const normalized = trimmed.replace(/^\/+|\/+$/g, '')
+  if (normalized.split('/').some(part => !part || part === '.' || part === '..')) {
+    throw new ValidationError(`Invalid category: ${category}. Path traversal is not allowed`)
+  }
   if (normalized.length > 128) {
     throw new ValidationError(`Category path too long: ${category} (max 128 chars)`)
   }

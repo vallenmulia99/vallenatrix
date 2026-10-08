@@ -161,9 +161,7 @@ term.onData((data) => {
 })
 
 window.api.onTerminalData((data) => {
-  if (isDirectPtyMode) {
-    term.write(data)
-  }
+  term.write(data)
 })
 
 const titlebarEl = document.getElementById('titlebar') as HTMLDivElement
@@ -201,8 +199,8 @@ document.addEventListener('keydown', (e) => {
     return
   }
 
-  // Ctrl+` or Ctrl+T: Toggle between AI Chat Mode and Direct PTY Shell Mode
-  if ((e.ctrlKey && e.key === '`') || (e.ctrlKey && e.key === 't')) {
+  // Ctrl+` or Ctrl+T toggles PTY only from AI mode; PTY owns shell shortcuts.
+  if (!isDirectPtyMode && ((e.ctrlKey && e.key === '`') || (e.ctrlKey && e.key === 't'))) {
     e.preventDefault()
     togglePtyMode()
     return
@@ -240,7 +238,7 @@ terminalContainer.addEventListener('contextmenu', (e) => {
 // Helper to construct vallen-media URL
 function getMediaUrl(filePath: string): string {
   if (!filePath) return ''
-  return `vallen-media://local${encodeURI(filePath)}`
+  return `vallen-media://local${filePath.split('/').map(encodeURIComponent).join('/')}`
 }
 
 // Apply Background & Overlay
@@ -275,6 +273,9 @@ function applyBackground(): void {
     imageEl.style.opacity = bg.opacity.toString()
     imageEl.style.backgroundImage = `url("${url}")`
     imageEl.style.backgroundSize = bg.fit === 'fill' ? '100% 100%' : bg.fit
+  } else {
+    videoEl.removeAttribute('src')
+    imageEl.style.backgroundImage = ''
   }
 }
 
@@ -313,7 +314,7 @@ function setFontSize(newSize: number): void {
   labelFontSize.textContent = `${clamped}px`
   fitAddon.fit()
   window.api.resizeTerminal(term.cols, term.rows)
-  window.api.saveConfig({ terminal: activeConfig.terminal })
+  debouncedSaveConfig({ terminal: activeConfig.terminal })
 }
 
 // Keyboard Shortcuts
@@ -465,12 +466,18 @@ selBgFit.addEventListener('change', async () => {
   await window.api.saveConfig({ background: activeConfig.background })
 })
 
-// BUG-20: Debounce config saves (avoid writing to disk on every slider input)
+// Merge pending updates so independent setting changes survive debounce.
 let saveConfigTimeout: NodeJS.Timeout | null = null
+let pendingConfigUpdates: Record<string, any> = {}
 function debouncedSaveConfig(updates: any, delay = 500) {
+  pendingConfigUpdates = { ...pendingConfigUpdates, ...updates,
+    ...(updates.background && pendingConfigUpdates.background ? { background: { ...pendingConfigUpdates.background, ...updates.background } } : {}) }
   if (saveConfigTimeout) clearTimeout(saveConfigTimeout)
   saveConfigTimeout = setTimeout(() => {
-    window.api.saveConfig(updates)
+    const pending = pendingConfigUpdates
+    pendingConfigUpdates = {}
+    saveConfigTimeout = null
+    void window.api.saveConfig(pending)
   }, delay)
 }
 
@@ -503,7 +510,7 @@ sliderBlur.addEventListener('input', async () => {
   labelBlur.textContent = `${val}px`
   activeConfig.background.blur = val
   applyBackground()
-  await window.api.saveConfig({ background: activeConfig.background })
+  debouncedSaveConfig({ background: activeConfig.background })
 })
 
 chkAutoPause.addEventListener('change', async () => {
@@ -551,7 +558,8 @@ function saveAgentColors() {
 function loadAgentColors() {
   const saved = localStorage.getItem('agent-colors')
   if (saved) {
-    const colors = JSON.parse(saved)
+    let colors: Record<string, string> = {}
+    try { colors = JSON.parse(saved) } catch { localStorage.removeItem('agent-colors') }
     colorToolPreparing.value = colors.toolPreparing || '#9ccfd8'
     colorToolSuccess.value = colors.toolSuccess || '#a3be8c'
     colorAgentResponse.value = colors.agentResponse || '#e0def4'

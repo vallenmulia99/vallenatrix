@@ -35,7 +35,10 @@ test('history compaction keeps tool-call messages with matching results', async 
   }
   await agent.chat('latest')
 
-  const message = requestMessages.find(m => m.role === 'assistant' && m.tool_calls?.length)
-  assert.equal(message, undefined)
+  const messageIndex = requestMessages.findIndex(m => m.role === 'assistant' && m.tool_calls?.length)
+  assert.ok(messageIndex >= 0)
+  const calls = requestMessages[messageIndex].tool_calls.map(call => call.id)
+  const results = requestMessages.slice(messageIndex + 1).filter(m => m.role === 'tool').map(m => m.tool_call_id)
+  assert.deepEqual(results.slice(0, calls.length), calls)
   assert.ok(requestMessages.some(m => m.role === 'user' && m.content.includes('Previous conversation summary')))
 })

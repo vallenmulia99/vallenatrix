@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, chmodSync } from 'fs'
 import { join } from 'path'
 import { getVallenatrixHome } from './config'
 import type { Message } from './providers'
@@ -23,7 +23,11 @@ export class SessionManager {
 
   private ensureDir(): void {
     if (!existsSync(this.baseDir)) {
-      mkdirSync(this.baseDir, { recursive: true })
+      mkdirSync(this.baseDir, { recursive: true, mode: 0o700 })
+    }
+    chmodSync(this.baseDir, 0o700)
+    for (const file of readdirSync(this.baseDir).filter(name => name.endsWith('.json'))) {
+      chmodSync(join(this.baseDir, file), 0o600)
     }
   }
 
@@ -69,7 +73,8 @@ export class SessionManager {
     }
 
     try {
-      writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
+      writeFileSync(filePath, JSON.stringify(data, null, 2), { encoding: 'utf-8', mode: 0o600 })
+      chmodSync(filePath, 0o600)
     } catch (err) {
       console.error('[SessionManager] Failed to save session:', err)
     }

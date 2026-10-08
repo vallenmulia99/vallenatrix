@@ -15,13 +15,13 @@ const NO_BUNDLED_MARKER = '.no-bundled-skills'
  * Get bundled skills source directory (Hermes reference)
  */
 export function getBundledSkillsDir(): string {
-  // Use Hermes reference repo as bundled source
-  const refPath = '/home/vallenganteng/Destop/vallenatrix/refrensi hermes-agent-2026.9.24/skills'
-  if (existsSync(refPath)) {
-    return refPath
-  }
-  // Fallback to empty (no bundled skills)
-  return ''
+  const candidates = [
+    process.env.VALLENATRIX_BUNDLED_SKILLS,
+    join(__dirname, '../../.vallenatrix/skills'),
+    join(process.cwd(), '.vallenatrix/skills'),
+    join(__dirname, '../../../.vallenatrix/skills')
+  ].filter((candidate): candidate is string => Boolean(candidate))
+  return candidates.find(candidate => existsSync(candidate)) || ''
 }
 
 /**
@@ -265,6 +265,11 @@ export function syncBundledSkills(options: { force?: boolean } = {}): SyncResult
       }
 
       // EXISTING skill
+      // No manifest entry means user owns this directory; do not claim or overwrite it.
+      if (!manifestHash) {
+        result.skipped.push(name)
+        continue
+      }
       const destHash = computeSkillHash(destPath)
       
       // User modified (dest hash != manifest hash) - SKIP

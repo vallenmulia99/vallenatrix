@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import type { AgentConfig, ProviderConfig } from './types'
@@ -102,6 +102,7 @@ export function saveConfig(updates: Partial<AgentConfig>): AgentConfig {
   }
 
   mkdirSync(home, { recursive: true })
+  chmodSync(home, 0o700)
   
   // BUG-10: Write config with 0600 permissions (API keys inside)
   const existingConfig = existsSync(configPath)
@@ -115,6 +116,7 @@ export function saveConfig(updates: Partial<AgentConfig>): AgentConfig {
   }
   
   writeFileSync(configPath, JSON.stringify(updated, null, 2), { mode: 0o600 })
+  chmodSync(configPath, 0o600)
   return updated
 }
 

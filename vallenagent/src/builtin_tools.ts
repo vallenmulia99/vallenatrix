@@ -1,8 +1,9 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, rmSync } from 'fs'
-import { resolve, join, dirname, relative, isAbsolute } from 'path'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, rmSync, lstatSync, realpathSync, openSync, readSync, closeSync } from 'fs'
+import { resolve, join, dirname, relative, isAbsolute, sep, basename } from 'path'
 import { exec, execFile, spawn } from 'child_process'
 import { homedir } from 'os'
 import { getVallenatrixHome, loadConfig, getActiveProvider } from './config'
+import { validateSkillName, validateCategory } from './skills_hub_models'
 import { registry, ToolSchema } from './tools'
 import { SkillLoader } from './skills'
 import { MemoryStore } from './memory'
@@ -240,6 +241,8 @@ export function fuzzyReplace(
     return { content: updated, diff: generateDiff(matchedBlock, newString), strategy: 'unicode_normalized' }
   }
 
+  // Ponytail: reject ambiguous fuzzy blocks; exact/normalized matches remain supported.
+  /*
   // Strategy 8: Block anchor
   if (oldLines.length >= 3) {
     const firstLine = oldLines[0].trim()
@@ -292,8 +295,9 @@ export function fuzzyReplace(
       strategy: 'similarity_match' 
     }
   }
+  */
 
-  throw new Error(`Failed to find unique match for replacement after trying 9 matching strategies. Verify old_string exists in file.`)
+  throw new Error(`Failed to find unique match for replacement after trying 7 matching strategies. Verify old_string exists in file.`)
 }
 
 function generateDiff(oldStr: string, newStr: string): string {
@@ -401,10 +405,14 @@ export function registerBuiltinTools(
         }
         
         // Detect binary files
-        const fd = require('fs').openSync(fullPath, 'r')
+        const fd = openSync(fullPath, 'r')
         const buffer = Buffer.alloc(8192)
-        const bytesRead = require('fs').readSync(fd, buffer, 0, 8192, 0)
-        require('fs').closeSync(fd)
+        let bytesRead: number
+        try {
+          bytesRead = readSync(fd, buffer, 0, 8192, 0)
+        } finally {
+          closeSync(fd)
+        }
         
         if (buffer.slice(0, bytesRead).includes(0)) {
           const dotIdx = fullPath.lastIndexOf('.')
@@ -426,7 +434,7 @@ export function registerBuiltinTools(
         const fileContent = readFileSync(fullPath, 'utf-8')
         const allLines = fileContent.split('\n')
         const offset = Math.max(1, Number(args.offset) || 1)
-        const limit = Math.min(2000, Number(args.limit) || 2000)
+        const limit = Math.max(0, Math.min(2000, Number(args.limit) || 2000))
 
         const startIdx = offset - 1
         const sliceLines = allLines.slice(startIdx, startIdx + limit)
@@ -606,7 +614,7 @@ export function registerBuiltinTools(
       const fullSearchDir = isAbsolute(searchDir) ? searchDir : resolve(basePath, searchDir)
       const target = (args.target || 'content') as 'content' | 'files'
       const pattern = String(args.pattern || '')
-      const limit = Math.min(200, Number(args.limit) || 50)
+      const limit = Math.max(0, Math.min(200, Number(args.limit) || 50))
       const offset = Math.max(0, Number(args.offset) || 0)
 
       if (!existsSync(fullSearchDir)) {
@@ -622,6 +630,7 @@ export function registerBuiltinTools(
           try {
             const entries = readdirSync(dir, { withFileTypes: true })
             for (const entry of entries) {
+              if (foundFiles.length >= offset + limit) return
               const skipDirs = ['.git', 'node_modules', 'dist', 'build', '.next']
               if (entry.isDirectory() && skipDirs.includes(entry.name)) continue
               
@@ -659,6 +668,7 @@ export function registerBuiltinTools(
         try {
           const entries = readdirSync(dir, { withFileTypes: true })
           for (const entry of entries) {
+            if (contentMatches.length >= offset + limit) return
             const skipDirs = ['.git', 'node_modules', 'dist', 'build', '.next']
             if (entry.isDirectory() && skipDirs.includes(entry.name)) continue
             
@@ -729,6 +739,10 @@ export function registerBuiltinTools(
       const rawCommand = String(args.command || '').trim()
       const workdir = (args.workdir as string) || context.workingDir || process.cwd()
       const timeout = (Number(args.timeout) || 120) * 1000
+
+      if (!existsSync(workdir) || !statSync(workdir).isDirectory()) {
+        return JSON.stringify({ exit_code: 1, error: `Working directory does not exist or is not a directory: ${workdir}` })
+      }
 
       // Direct single "cd <dir>" handler
       if (rawCommand.startsWith('cd ') && !rawCommand.includes('&&') && !rawCommand.includes(';') && !rawCommand.includes('|')) {
@@ -967,14 +981,21 @@ export function registerBuiltinTools(
           // BUG-20: Block private IPs (SSRF protection)
           const url = new URL(targetUrl)
           const hostname = url.hostname
+          const ipv4 = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)?.slice(1).map(Number)
+          const blockedIp = ipv4 && (
+            ipv4[0] === 0 || ipv4[0] === 10 || ipv4[0] === 127 ||
+            (ipv4[0] === 169 && ipv4[1] === 254) ||
+            (ipv4[0] === 172 && ipv4[1] >= 16 && ipv4[1] <= 31) ||
+            (ipv4[0] === 192 && ipv4[1] === 168)
+          )
+          const ipv6 = hostname.replace(/^\[|\]$/g, '').toLowerCase()
           if (
-            hostname === 'localhost' ||
-            hostname.startsWith('127.') ||
-            hostname.startsWith('10.') ||
-            hostname.startsWith('192.168.') ||
-            hostname.match(/^172\.(1[6-9]|2[0-9]|3[01])\./) ||
-            hostname === '::1' ||
-            hostname.startsWith('fe80:')
+            !['http:', 'https:'].includes(url.protocol) ||
+            hostname === 'localhost' || hostname.endsWith('.localhost') ||
+            Boolean(blockedIp) || ipv6 === '::' || ipv6 === '::1' ||
+            ipv6.startsWith('fe8') || ipv6.startsWith('fe9') || ipv6.startsWith('fea') || ipv6.startsWith('feb') ||
+            ipv6.startsWith('fc') || ipv6.startsWith('fd') ||
+            /^\[::ffff:(?:\d{1,3}\.){3}\d{1,3}\]$/i.test(hostname)
           ) {
             results.push({
               url: targetUrl,
@@ -990,14 +1011,14 @@ export function registerBuiltinTools(
           const timeoutId = setTimeout(() => controller.abort(), 30000)
           
           const res = await fetch(targetUrl, {
+            redirect: 'manual',
             headers: {
               'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             },
             signal: controller.signal
           })
-          clearTimeout(timeoutId)
-
           if (!res.ok) {
+            clearTimeout(timeoutId)
             results.push({
               url: targetUrl,
               title: targetUrl,
@@ -1008,6 +1029,7 @@ export function registerBuiltinTools(
           }
 
           const rawHtml = await res.text()
+          clearTimeout(timeoutId)
 
           const titleMatch = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
           const title = titleMatch ? titleMatch[1].trim() : targetUrl
@@ -1023,9 +1045,9 @@ export function registerBuiltinTools(
             .replace(/<br\s*\/?>/gi, '\n')
             .replace(/<[^>]+>/g, ' ')
             .replace(/&nbsp;/g, ' ')
-            .replace(/&amp;/g, '&')
             .replace(/&lt;/g, '<')
             .replace(/&gt;/g, '>')
+            .replace(/&amp;/g, '&')
             .replace(/[ \t]+/g, ' ')
             .replace(/\n\s*\n+/g, '\n\n')
             .trim()
@@ -1133,7 +1155,7 @@ export function registerBuiltinTools(
       const target = (args.target || 'memory') as 'memory' | 'user'
 
       if (Array.isArray(args.operations) && args.operations.length > 0) {
-        const res = mem.batch(args.operations, target)
+        const res = await mem.batch(args.operations, target)
         return JSON.stringify(res)
       }
 
@@ -1142,11 +1164,11 @@ export function registerBuiltinTools(
       const oldText = String(args.old_text || '')
 
       if (action === 'add') {
-        return JSON.stringify(mem.add(target, content))
+        return JSON.stringify(await mem.add(target, content))
       } else if (action === 'replace') {
-        return JSON.stringify(mem.replace(target, oldText, content))
+        return JSON.stringify(await mem.replace(target, oldText, content))
       } else if (action === 'remove') {
-        return JSON.stringify(mem.remove(target, oldText))
+        return JSON.stringify(await mem.remove(target, oldText))
       }
 
       return JSON.stringify({ error: `Unknown memory action: ${action}` })
@@ -1234,8 +1256,8 @@ export function registerBuiltinTools(
         }
         const buf = Buffer.from(await res.arrayBuffer())
 
-        // Detect real image format from magic bytes
-        let realExt = 'png'
+        // Detect real image format from magic bytes; reject non-image error pages.
+        let realExt: string | undefined
         if (buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xD8) {
           realExt = 'jpg'
         } else if (buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) {
@@ -1243,6 +1265,7 @@ export function registerBuiltinTools(
         } else if (buf.length >= 4 && buf.slice(0, 4).toString() === 'RIFF') {
           realExt = 'webp'
         }
+        if (!realExt) throw new Error(`Pollinations response is not a supported image (content-type: ${res.headers.get('content-type') || 'unknown'})`)
 
         let finalPath = targetFile
         if (realExt === 'jpg' && finalPath.toLowerCase().endsWith('.png')) {
@@ -1647,8 +1670,18 @@ export function registerBuiltinTools(
 
       const filePath = args.file_path ? String(args.file_path).trim() : ''
       if (filePath) {
-        const skillBaseDir = dirname(skill.path)
-        const linkedFullPath = join(skillBaseDir, filePath)
+        const skillBaseDir = realpathSync(dirname(skill.path))
+        const linkedFullPath = resolve(skillBaseDir, filePath)
+        const relPath = relative(skillBaseDir, linkedFullPath)
+        if (!relPath || relPath.startsWith(`..${sep}`) || relPath === '..' || isAbsolute(relPath)) {
+          return JSON.stringify({ error: `Linked file '${filePath}' escapes skill directory` })
+        }
+        let cursor = skillBaseDir
+        for (const part of relPath.split(sep)) {
+          cursor = join(cursor, part)
+          if (!existsSync(cursor)) break
+          if (lstatSync(cursor).isSymbolicLink()) return JSON.stringify({ error: `Linked file '${filePath}' cannot traverse symlinks` })
+        }
         if (!existsSync(linkedFullPath)) {
           return JSON.stringify({ error: `Linked file '${filePath}' not found in skill '${name}'` })
         }
@@ -1727,13 +1760,20 @@ export function registerBuiltinTools(
           if (!name) throw new Error('Skill name is required for operation')
 
           if (opAction === 'create') {
-            const category = op.category ? String(op.category).trim() : 'custom'
-            const skillDir = join(targetBaseDir, category, name)
+            const category = validateCategory(op.category ? String(op.category).trim() : 'custom')
+            const safeName = validateSkillName(name)
+            const base = resolve(targetBaseDir)
+            const skillDir = resolve(base, category, safeName)
+            const rel = relative(base, skillDir)
+            if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('Skill path escapes skills directory')
+            if (existsSync(skillDir) && lstatSync(skillDir).isSymbolicLink()) throw new Error('Skill directory cannot be a symlink')
+            const parent = dirname(skillDir)
+            if (existsSync(parent) && lstatSync(parent).isSymbolicLink()) throw new Error('Skill category cannot be a symlink')
             mkdirSync(skillDir, { recursive: true })
             const skillPath = join(skillDir, 'SKILL.md')
-            const content = String(op.content || `---\nname: ${name}\ndescription: Custom skill\ncategory: ${category}\n---\n# ${name}\n`)
+            const content = String(op.content || `---\nname: ${safeName}\ndescription: Custom skill\ncategory: ${category}\n---\n# ${safeName}\n`)
             writeFileSync(skillPath, content, 'utf-8')
-            results.push({ action: 'create', name, path: skillPath, status: 'created' })
+            results.push({ action: 'create', name: safeName, path: skillPath, status: 'created' })
           } else if (opAction === 'patch') {
             const skill = loader?.get(name)
             if (!skill) throw new Error(`Skill '${name}' not found for patch`)
@@ -1744,19 +1784,34 @@ export function registerBuiltinTools(
           } else if (opAction === 'delete') {
             const skill = loader?.get(name)
             if (!skill) throw new Error(`Skill '${name}' not found for delete`)
-            rmSync(dirname(skill.path), { recursive: true, force: true })
+            const skillDir = resolve(dirname(skill.path))
+            const root = resolve(targetBaseDir)
+            const rel = relative(root, skillDir)
+            if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('Skill path escapes skills directory')
+            if (basename(skillDir) === 'skills') throw new Error('Refusing to delete skills root')
+            rmSync(skillDir, { recursive: true, force: true })
             results.push({ action: 'delete', name, status: 'deleted' })
           } else if (opAction === 'write_file') {
             const skill = loader?.get(name)
             if (!skill) throw new Error(`Skill '${name}' not found`)
-            const filePath = join(dirname(skill.path), op.file_path)
+            const skillDir = realpathSync(dirname(skill.path))
+            const filePath = resolve(skillDir, String(op.file_path || ''))
+            const rel = relative(skillDir, filePath)
+            if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('Skill file path escapes skill directory')
+            let cursor = skillDir
+            for (const part of rel.split(sep)) { cursor = join(cursor, part); if (existsSync(cursor) && lstatSync(cursor).isSymbolicLink()) throw new Error('Skill file path cannot traverse symlinks') }
             mkdirSync(dirname(filePath), { recursive: true })
             writeFileSync(filePath, String(op.content || ''), 'utf-8')
             results.push({ action: 'write_file', name, file_path: op.file_path, status: 'written' })
           } else if (opAction === 'remove_file') {
             const skill = loader?.get(name)
             if (!skill) throw new Error(`Skill '${name}' not found`)
-            const filePath = join(dirname(skill.path), op.file_path)
+            const skillDir = realpathSync(dirname(skill.path))
+            const filePath = resolve(skillDir, String(op.file_path || ''))
+            const rel = relative(skillDir, filePath)
+            if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('Skill file path escapes skill directory')
+            let cursor = skillDir
+            for (const part of rel.split(sep)) { cursor = join(cursor, part); if (existsSync(cursor) && lstatSync(cursor).isSymbolicLink()) throw new Error('Skill file path cannot traverse symlinks') }
             if (existsSync(filePath)) rmSync(filePath, { force: true })
             results.push({ action: 'remove_file', name, file_path: op.file_path, status: 'removed' })
           }

@@ -26,6 +26,7 @@ export interface CompletionRequest {
   stream?: boolean
   signal?: AbortSignal  // BUG-18: Support abort
   onChunk?: (chunk: string) => void
+  timeout?: number
 }
 
 export interface CompletionResponse {
@@ -67,6 +68,8 @@ export class OpenAICompatibleProvider implements Provider {
   async chat(request: CompletionRequest): Promise<CompletionResponse> {
     const isStream = Boolean(request.stream && request.onChunk)
 
+    const timeoutSignal = request.timeout ? AbortSignal.timeout(request.timeout) : undefined
+    const signal = request.signal && timeoutSignal ? AbortSignal.any([request.signal, timeoutSignal]) : request.signal || timeoutSignal
     const response = await fetch(`${this.baseURL}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -79,11 +82,11 @@ export class OpenAICompatibleProvider implements Provider {
         tools: request.tools,
         max_tokens: request.max_tokens,
         temperature: request.temperature,
-        stream: isStream
+        stream: isStream,
+        ...(isStream ? { stream_options: { include_usage: true } } : {})
       }),
-      signal: request.signal  // BUG-18: Pass abort signal
+      signal  // BUG-18: Pass abort signal
     })
-
     if (!response.ok) {
       const error = await response.text()
       throw new Error(`Provider API error: ${response.status} ${error}`)
@@ -106,58 +109,57 @@ export class OpenAICompatibleProvider implements Provider {
     const decoder = new TextDecoder('utf-8')
     let buffer = ''
     let fullContent = ''
-    const toolCallsMap: Map<number, { id: string; name: string; args: string }> = new Map()
+    const toolCallsMap = new Map<string, { id: string; name: string; args: string }>()
+    const toolCallIndexes = new Map<number, string>()
+    const processLine = (rawLine: string) => {
+      const line = rawLine.trim()
+      if (!line || line.startsWith(':')) return
+      const data = line.startsWith('data:') ? line.slice(5).trimStart() : ''
+      if (!data || data === '[DONE]') return
+      let parsed: any
+      try { parsed = JSON.parse(data) } catch { throw new Error(`Invalid provider SSE data: ${data.slice(0, 500)}`) }
+      if (parsed.error) throw new Error(`Provider stream error: ${parsed.error.message || JSON.stringify(parsed.error)}`)
+      if (parsed.usage) {
+        promptTokens = parsed.usage.prompt_tokens || promptTokens
+        completionTokens = parsed.usage.completion_tokens || completionTokens
+      }
+      const choice = parsed.choices?.[0]
+      if (!choice) return
+      if (choice.finish_reason) finishReason = choice.finish_reason
+      const delta = choice.delta
+      if (delta?.content) {
+        fullContent += delta.content
+        request.onChunk?.(delta.content)
+      }
+      for (const tc of delta?.tool_calls || []) {
+        const idx = tc.index ?? 0
+        const key = tc.id || toolCallIndexes.get(idx) || `index:${idx}`
+        if (tc.id) toolCallIndexes.set(idx, key)
+        const current = toolCallsMap.get(key)
+        if (!current) toolCallsMap.set(key, { id: tc.id || `call_${Date.now()}_${idx}`, name: tc.function?.name || '', args: tc.function?.arguments || '' })
+        else {
+          if (tc.id) current.id = tc.id
+          if (tc.function?.name) current.name += tc.function.name
+          if (tc.function?.arguments) current.args += tc.function.arguments
+        }
+      }
+    }
     let finishReason = 'stop'
     let promptTokens = 0
     let completionTokens = 0
 
     while (true) {
       const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-
-      for (const rawLine of lines) {
-        const line = rawLine.trim()
-        if (!line || line.startsWith(':')) continue
-        if (line === 'data: [DONE]') continue
-        if (line.startsWith('data: ')) {
-          try {
-            const parsed = JSON.parse(line.slice(6))
-            if (parsed.usage) {
-              promptTokens = parsed.usage.prompt_tokens || promptTokens
-              completionTokens = parsed.usage.completion_tokens || completionTokens
-            }
-            const choice = parsed.choices?.[0]
-            if (choice) {
-              if (choice.finish_reason) finishReason = choice.finish_reason
-              const delta = choice.delta
-              if (delta?.content) {
-                fullContent += delta.content
-                request.onChunk?.(delta.content)
-              }
-              if (delta?.tool_calls) {
-                for (const tc of delta.tool_calls) {
-                  const idx = tc.index ?? 0
-                  if (!toolCallsMap.has(idx)) {
-                    toolCallsMap.set(idx, {
-                      id: tc.id || `call_${Date.now()}_${idx}`,
-                      name: tc.function?.name || '',
-                      args: tc.function?.arguments || ''
-                    })
-                  } else {
-                    const current = toolCallsMap.get(idx)!
-                    if (tc.id) current.id = tc.id
-                    if (tc.function?.name) current.name += tc.function.name
-                    if (tc.function?.arguments) current.args += tc.function.arguments
-                  }
-                }
-              }
-            }
-          } catch {}
-        }
+      if (done) {
+        buffer += decoder.decode()
+        if (buffer) processLine(buffer)
+        buffer = ''
+        break
       }
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split(/\r?\n/)
+      buffer = lines.pop() || ''
+      for (const line of lines) processLine(line)
     }
 
     const assembledToolCalls = toolCallsMap.size > 0 ? Array.from(toolCallsMap.values()).map(tc => ({

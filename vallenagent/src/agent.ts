@@ -54,11 +54,11 @@ export interface AgentCallbacks {
   onChunk?: (chunk: string) => void
 }
 
-function pruneOldToolResults(messages: Message[], protectTailCount: number = 8): Message[] {
+function pruneOldToolResults(messages: Message[], protectTailCount: number = 8, protectedStart = messages.length): Message[] {
   if (messages.length <= protectTailCount) return messages
   const cutoffIndex = messages.length - protectTailCount
   return messages.map((m, idx) => {
-    if (idx < cutoffIndex && m.role === 'tool' && m.content && m.content.length > 250) {
+    if (idx < cutoffIndex && idx >= protectedStart && m.role === 'tool' && m.content && m.content.length > 250) {
       try {
         const parsed = JSON.parse(m.content)
         if (parsed.error || (typeof parsed.exit_code === 'number' && parsed.exit_code !== 0)) {
@@ -74,10 +74,12 @@ function pruneOldToolResults(messages: Message[], protectTailCount: number = 8):
   })
 }
 
-function compactHistory(history: Message[], keepTailCount: number = 8): boolean {
+function compactHistory(history: Message[], keepTailCount: number = 8, preserveIndex = -1): boolean {
   if (history.length <= keepTailCount + 2) return false
   const startIndex = 1 // preserve system prompt at index 0
-  const endIndex = history.length - keepTailCount
+  let endIndex = Math.min(history.length - keepTailCount, preserveIndex < 0 ? history.length : preserveIndex)
+  while (endIndex > startIndex && history[endIndex]?.role === 'tool') endIndex--
+  if (endIndex <= startIndex) return false
 
   // Extract key summary points from old messages
   const oldTurns = history.slice(startIndex, endIndex)
@@ -121,8 +123,11 @@ export class AIAgent {
   private isInterrupted: boolean = false
   private conversationHistory: Message[] = []
   private chatLock: Promise<unknown> = Promise.resolve()
+  private chatActive = false
   private abortController: AbortController | null = null
+
   private gameDevMode: boolean = false
+  public toolWhitelist: string[] | undefined
 
   constructor(options: AgentOptions = {}) {
     this.config = options.config || loadConfig()
@@ -181,6 +186,7 @@ export class AIAgent {
     if (this.abortController) {
       this.abortController.abort()
     }
+
   }
 
   getSessionId(): string {
@@ -205,6 +211,13 @@ export class AIAgent {
   }
 
   resetSession(): void {
+    if (this.chatActive) {
+      // Reset cannot safely mutate history while serialized chat is active.
+      this.interrupt()
+      const resetAfterTurn = this.chatLock.then(() => { this.resetSession() })
+      this.chatLock = resetAfterTurn
+      return
+    }
     this.conversationHistory = []
     this.sessionId = `session-${Date.now()}`
     // BUG-20: Clear todo store on session reset
@@ -220,14 +233,17 @@ export class AIAgent {
     await prevLock
     
     try {
+      this.chatActive = true
       return await this._chatImpl(userMessage, callbacks, systemPrompt)
     } finally {
+      this.chatActive = false
       releaseLock()
     }
   }
 
   private async _chatImpl(userMessage: string, callbacks?: AgentCallbacks, systemPrompt?: string): Promise<AgentResponse> {
     this.isInterrupted = false
+    const turnModel = this.provider.model
     
     // BUG-18: Create AbortController for this turn
     this.abortController = new AbortController()
@@ -249,13 +265,30 @@ export class AIAgent {
     // /plan built-in: rewrite turn to plan-mode prompt (Hermes pattern)
     let effectiveUserMessage = userMessage
     const trimmedUserMsg = userMessage.trim()
-    if (trimmedUserMsg.startsWith('/plan') && !trimmedUserMsg.startsWith('[/plan')) {
+    if (/^\/plan(?:\s|$)/.test(trimmedUserMsg)) {
       const task = trimmedUserMsg.length > 5 ? trimmedUserMsg.slice(5).trim() : ''
       effectiveUserMessage = buildPlanPrompt(task)
     }
 
     // Append user message to active history
     this.conversationHistory.push({ role: 'user', content: effectiveUserMessage })
+    const userEntry = this.conversationHistory[this.conversationHistory.length - 1]
+    const words = new Set(effectiveUserMessage.toLowerCase().match(/[a-z0-9]+/g) || [])
+    const ignored = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'buat', 'bikin', 'bikinin', 'tolong', 'please', 'page'])
+    const messageLower = effectiveUserMessage.toLowerCase()
+    const matchedSkill = this.skillLoader.list().map(skill => ({
+      skill,
+      score: skill.metadata.triggers?.some(trigger => trigger && messageLower.includes(trigger.toLowerCase())) ? 100 :
+        [...words].filter(word => word.length > 2 && !ignored.has(word) && `${skill.name} ${skill.metadata.description}`.toLowerCase().includes(word)).length
+    })).filter(item => item.score > 0).sort((a, b) => b.score - a.score)[0]?.skill
+    if (matchedSkill) {
+      const args = { name: matchedSkill.name }
+      const id = `preload-${matchedSkill.name}`
+      try { callbacks?.onToolStart?.({ id, name: 'skill_view', args, preview: `preparing skill_view ${matchedSkill.name}` }) } catch {}
+      userEntry.content += `\n\n[Loaded skill: ${matchedSkill.name}]\n${matchedSkill.content}`
+      const result = `# skill ${matchedSkill.name}\n\n${matchedSkill.content}`
+      try { callbacks?.onToolEnd?.({ id, name: 'skill_view', args, result, preview: `skill ${matchedSkill.name}` }) } catch {}
+    }
 
     const messages = this.conversationHistory
 
@@ -287,16 +320,16 @@ export class AIAgent {
 
       // Auto-compaction if conversation history grows long
       if (this.conversationHistory.length > 20) {
-        compactHistory(this.conversationHistory, 8)
+        compactHistory(this.conversationHistory, 8, startHistoryLen - 1)
       }
 
-      const messages = pruneOldToolResults(this.conversationHistory, 8)
-      let tools = registry.getOpenAISchemas()
+      const messages = pruneOldToolResults(this.conversationHistory, 8, startHistoryLen - 1)
+      let tools = registry.getOpenAISchemas([], this.toolWhitelist)
       if (this.isSubagent) {
         tools = tools.filter(t => t.function.name !== 'delegate_task')
       }
       const response = await this.provider.chat({
-        model: this.provider.model,
+        model: turnModel,
         messages,
         tools: tools.length > 0 ? tools : undefined,
         signal: this.abortController?.signal,  // BUG-18: Pass abort signal
@@ -346,7 +379,7 @@ export class AIAgent {
           let parseError: string | null = null
           try {
             toolArgs = typeof toolCall.function.arguments === 'string'
-              ? JSON.parse(toolCall.function.arguments)
+              ? JSON.parse(toolCall.function.arguments.trim() || '{}')
               : toolCall.function.arguments || {}
           } catch (err: any) {
             parseError = err.message
@@ -382,7 +415,7 @@ export class AIAgent {
             }
           }
 
-          let result = await registry.execute(toolName, toolArgs, context)
+          let result = await registry.execute(toolName, toolArgs, context, this.toolWhitelist, this.abortController?.signal)
           const durationSec = (Date.now() - toolStart) / 1000
 
           if (context.workingDir) {
@@ -699,9 +732,8 @@ Prefer engine-native solutions over custom implementations. Write tests for game
         })
         
         // Override system prompt and filter tools
-        registry.filterTools(toolWhitelist)
+        reviewAgent.toolWhitelist = toolWhitelist
         const res = await reviewAgent.chat(userPrompt, undefined, systemPrompt)
-        registry.clearFilter()
         
         return res.response
       },

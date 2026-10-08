@@ -3,11 +3,16 @@
  * Adapted from Hermes Agent skills_hub_search.py
  */
 
-import { exec } from 'child_process'
+import { exec, execFile } from 'child_process'
 import { promisify } from 'util'
+import { mkdtempSync, rmSync, readFileSync, readdirSync } from 'fs'
+import { tmpdir } from 'os'
+import { join, relative, resolve, sep } from 'path'
+import { URL } from 'url'
 import type { SkillSearchResult, SkillBundle } from './skills_hub_models'
 
 const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 
 export interface SearchOptions {
   query?: string
@@ -127,15 +132,26 @@ export async function searchSkills(options: SearchOptions): Promise<SkillSearchR
  * Fetch skill bundle from GitHub URL
  */
 export async function fetchGitHubSkill(url: string): Promise<SkillBundle> {
-  const tmpDir = `/tmp/vallenatrix-skill-${Date.now()}`
+  const parsedUrl = new URL(url)
+  if (parsedUrl.protocol !== 'https:' || parsedUrl.hostname !== 'github.com' || parsedUrl.username || parsedUrl.password || !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\/?$/.test(parsedUrl.pathname)) {
+    throw new Error('Invalid GitHub skill URL')
+  }
+  const tmpDir = mkdtempSync(join(tmpdir(), 'vallenatrix-skill-'))
   
   try {
     // Clone repo (shallow, single branch)
-    await execAsync(`git clone --depth 1 "${url}" "${tmpDir}"`)
+    await execFileAsync('git', ['clone', '--depth', '1', '--', parsedUrl.toString(), tmpDir], { timeout: 120000, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
     
     // Find SKILL.md files
-    const { stdout: findOutput } = await execAsync(`find "${tmpDir}" -name "SKILL.md" -type f`)
-    const skillFiles = findOutput.trim().split('\n').filter(Boolean)
+    const skillFiles: string[] = []
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory() && entry.name !== '.git') walk(path)
+        else if (entry.isFile() && entry.name === 'SKILL.md') skillFiles.push(path)
+      }
+    }
+    walk(tmpDir)
     
     if (skillFiles.length === 0) {
       throw new Error('No SKILL.md found in repository')
@@ -147,12 +163,18 @@ export async function fetchGitHubSkill(url: string): Promise<SkillBundle> {
     
     // Read all files in skill directory
     const files: Record<string, string> = {}
-    const { stdout: fileList } = await execAsync(`find "${skillDir}" -type f`)
-    const filePaths = fileList.trim().split('\n').filter(Boolean)
+    const filePaths: string[] = []
+    const collect = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) collect(path)
+        else if (entry.isFile()) filePaths.push(path)
+      }
+    }
+    collect(skillDir)
     
-    const { readFileSync } = require('fs')
     for (const filePath of filePaths) {
-      const relPath = filePath.replace(skillDir + '/', '')
+      const relPath = relative(skillDir, filePath)
       try {
         const content = readFileSync(filePath, 'utf-8')
         files[relPath] = content
@@ -180,7 +202,7 @@ export async function fetchGitHubSkill(url: string): Promise<SkillBundle> {
   } finally {
     // Cleanup temp dir
     try {
-      await execAsync(`rm -rf "${tmpDir}"`)
+      rmSync(tmpDir, { recursive: true, force: true })
     } catch {
       // Ignore cleanup errors
     }
@@ -191,8 +213,14 @@ export async function fetchGitHubSkill(url: string): Promise<SkillBundle> {
  * Fetch official skill from Hermes reference
  */
 export async function fetchOfficialSkill(category: string, name: string): Promise<SkillBundle> {
-  const refPath = '/home/vallenganteng/Destop/vallenatrix/refrensi hermes-agent-2026.9.24/skills'
-  const skillPath = `${refPath}/${category}/${name}`
+  if (!/^[A-Za-z0-9_-]+$/.test(category) || !/^[A-Za-z0-9_-]+$/.test(name)) throw new Error('Invalid official skill identifier')
+  const candidates = [process.env.VALLENATRIX_BUNDLED_SKILLS, join(__dirname, '../../.vallenatrix/skills'), join(process.cwd(), '.vallenatrix/skills')].filter(Boolean) as string[]
+  const refPath = candidates.find(path => require('fs').existsSync(path))
+  if (!refPath) throw new Error('Official skills directory not found')
+  const skillPath = resolve(refPath, category, name)
+  const relPath = relative(resolve(refPath), skillPath)
+  if (!relPath || relPath === '..' || relPath.startsWith(`..${sep}`) || relPath.startsWith(`${sep}`)) throw new Error('Invalid official skill path')
+
   
   try {
     const { existsSync, readdirSync, readFileSync, statSync } = require('fs')

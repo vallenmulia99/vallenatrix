@@ -9,6 +9,7 @@ export interface SkillMetadata {
   author?: string
   version?: string
   platforms?: string[]
+  triggers?: string[]
 }
 
 export interface Skill {
@@ -23,7 +24,7 @@ export interface Skill {
   }
 }
 
-const SKILL_PATTERN = /SKILL\.md$/i
+const SKILL_PATTERN = /^SKILL\.md$/i
 
 function scanDirectory(dir: string, skills: Map<string, Skill>, rootDir: string = dir): void {
   if (!existsSync(dir)) {
@@ -45,7 +46,8 @@ function scanDirectory(dir: string, skills: Map<string, Skill>, rootDir: string 
           const skillData = loadSkillFile(fullPath, rootDir)
           if (skillData) {
             if (skills.has(skillData.name)) {
-              console.warn(`[Skills] Duplicate skill name '${skillData.name}': ${fullPath} overwrites ${skills.get(skillData.name)?.path}`)
+              console.warn(`[Skills] Duplicate skill name '${skillData.name}': ${fullPath} ignored; already loaded from ${skills.get(skillData.name)?.path}`)
+              continue
             }
             skills.set(skillData.name, skillData)
           }
@@ -80,7 +82,7 @@ function loadSkillFile(filePath: string, rootDir: string): Skill | null {
   const { data, content } = matter(raw)
   
   // Extract skill name from frontmatter or directory name
-  const skillName = data.name || basename(dirname(filePath))
+  const skillName = typeof data.name === 'string' && data.name.trim() ? data.name.trim() : basename(dirname(filePath))
   
   if (!skillName) {
     console.warn(`[Skills] No name found for ${filePath}`)
@@ -101,11 +103,12 @@ function loadSkillFile(filePath: string, rootDir: string): Skill | null {
 
   const metadata: SkillMetadata = {
     name: skillName,
-    description: data.description || 'No description',
-    category,
+    description: typeof data.description === 'string' ? data.description : 'No description',
+    category: typeof category === 'string' ? category : 'general',
     author: data.author,
     version: data.version,
-    platforms: data.platforms
+    platforms: data.platforms,
+    triggers: Array.isArray(data.triggers) ? data.triggers.filter((trigger: unknown): trigger is string => typeof trigger === 'string') : []
   }
 
   const linkedFiles = getLinkedFiles(dirname(filePath))
@@ -220,7 +223,7 @@ export class SkillLoader {
   }
 
   disable(name: string): boolean {
-    if (this.disabledSkills.has(name)) return false
+    if (this.disabledSkills.has(name) || !this.skills.has(name)) return false
     this.disabledSkills.add(name)
     this.skills.delete(name)
     return true

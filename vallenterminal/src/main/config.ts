@@ -36,14 +36,14 @@ export class ConfigManager {
 
   loadConfig(): AppConfig {
     if (!existsSync(this.configPath)) {
-      return { ...DEFAULT_CONFIG }
+      return sanitizeConfig(DEFAULT_CONFIG)
     }
     try {
       const content = readFileSync(this.configPath, 'utf-8')
       const parsed = JSON.parse(content)
       return sanitizeConfig(parsed)
     } catch {
-      return { ...DEFAULT_CONFIG }
+      return sanitizeConfig(DEFAULT_CONFIG)
     }
   }
 
@@ -56,8 +56,8 @@ export class ConfigManager {
     const merged = sanitizeConfig({ ...current, ...safePartial, shell: current.shell })
     try {
       writeFileSync(this.configPath, JSON.stringify(merged, null, 2), 'utf-8')
-    } catch {
-      // Ignore write errors or disk full
+    } catch (error) {
+      throw new Error(`Failed to save config: ${error instanceof Error ? error.message : String(error)}`)
     }
     return merged
   }

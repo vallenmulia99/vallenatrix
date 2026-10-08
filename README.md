@@ -43,6 +43,24 @@ vallenatrix
 vallenatrix --foreground
 ```
 
+## WhatsApp Remote Agent
+
+Pair WhatsApp with `node watools/wa-client.js connect <nomor>`, then configure `~/.vallenatrix/config.json`:
+
+```json
+{
+  "platforms": {
+    "whatsapp": {
+      "enabled": true,
+      "mode": "bot",
+      "allowedUsers": ["<nomor-pengirim-dengan-kode-negara>"]
+    }
+  }
+}
+```
+
+Restart Vallenatrix. Incoming messages from allowlisted numbers run through same agent instance as terminal and appear in terminal; agent replies to WhatsApp. Use `/stop` to interrupt. Laptop and Vallenatrix must stay online. Keep `allowedUsers` explicit; wildcard is rejected.
+
 ## Shortcut Keyboard
 
 | Shortcut | Fungsi |

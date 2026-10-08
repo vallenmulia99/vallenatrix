@@ -1,0 +1,9 @@
+{
+  "type": "module",
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "node-cache": "^5.1.2",
+    "ourin-baileys": "^9.0.21",
+    "pino": "^10.4.0"
+  }
+}

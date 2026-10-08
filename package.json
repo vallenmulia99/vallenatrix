@@ -14,7 +14,16 @@
     "start": "npm -w vallenagent run build && npm -w vallenterminal run start",
     "test": "npm -w vallenterminal run test"
   },
-  "keywords": ["terminal", "electron"],
+  "keywords": [
+    "terminal",
+    "electron"
+  ],
   "author": "vallenganteng",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "ourin-baileys": "^9.0.21",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0"
+  }
 }

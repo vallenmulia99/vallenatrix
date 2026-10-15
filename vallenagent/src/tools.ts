@@ -96,6 +96,7 @@ export interface ToolContext {
   providerConfig?: { base_url: string; api_key: string; model: string }
   httpRequester?: (url: URL, options: any, callback: (response: any) => void) => any
   isSubagent?: boolean
+  toolWhitelist?: string[]
   onTerminalOutput?: (stream: 'stdout' | 'stderr', chunk: string) => void
   delegateAgentFactory?: (goal: string) => Promise<string>
   stores?: {
@@ -113,6 +114,8 @@ export interface ToolRegistration {
   parallelSafe?: boolean
   checkFn?: () => boolean
 }
+
+const DEFERRED_TOOLS = new Set(['web_search', 'web_extract', 'browser_exec', 'image_generate', 'vision_analyze', 'manage_connections', 'skill_manage'])
 
 class ToolRegistry {
   private tools: Map<string, ToolRegistration> = new Map()
@@ -167,8 +170,14 @@ class ToolRegistry {
     return tools.map(t => t.schema)
   }
 
+  getDeferredTools(whitelist?: string[]): ToolRegistration[] {
+    const allowedTools = whitelist ?? this.whitelist
+    return this.list().filter(tool => DEFERRED_TOOLS.has(tool.name) &&
+      (!allowedTools || allowedTools.includes(tool.name)) && (!tool.checkFn || tool.checkFn()))
+  }
+
   getOpenAISchemas(enabledToolsets: string[] = [], whitelist?: string[]): Array<{ type: 'function'; function: ToolSchema }> {
-    return this.getSchemas(enabledToolsets, whitelist).map(s => ({
+    return this.getSchemas(enabledToolsets, whitelist).filter(s => !DEFERRED_TOOLS.has(s.name)).map(s => ({
       type: 'function',
       function: s
     }))

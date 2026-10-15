@@ -5,6 +5,11 @@ import { requiresApproval, requiresDangerousApproval, approvalMode } from '../di
 test('approval: dangerous mode gates destructive shell, allows project commands', () => {
   assert.equal(requiresApproval({ name: 'terminal', args: { command: 'git status' } }, 'dangerous'), false)
   assert.equal(requiresApproval({ name: 'terminal', args: { command: 'ls -la src' } }, 'dangerous'), false)
+  assert.equal(requiresApproval({ name: 'terminal', args: { command: 'ls -la; node -v; python3 -V; npm -v' } }, 'dangerous'), false)
+  assert.equal(requiresApproval({ name: 'terminal', args: { command: 'pwd && git status --short' } }, 'dangerous'), false)
+  assert.equal(requiresApproval({ name: 'terminal', args: { command: 'which chromium chromium-browser google-chrome firefox xvfb-run 2>/dev/null; echo "---"; npm -v' } }, 'dangerous'), false)
+  assert.equal(requiresApproval({ name: 'terminal', args: { command: `cd vallen-anime-space-rpg && for f in $(find src tests server.mjs -name '*.js' -o -name '*.mjs'); do node --check "$f" || echo "SYNTAX FAIL $f"; done; echo "--- syntax ok ---"; npm test` } }, 'dangerous'), false)
+  assert.equal(requiresApproval({ name: 'terminal', args: { command: 'ls -la; rm -rf /tmp/x' } }, 'dangerous'), true)
   assert.equal(requiresApproval({ name: 'terminal', args: { command: 'git commit -m "x"' } }, 'dangerous'), true)
   assert.equal(requiresApproval({ name: 'terminal', args: { command: 'rm -rf /tmp/x' } }, 'dangerous'), true)
   assert.equal(requiresApproval({ name: 'terminal', args: { command: 'cd /tmp && rm -rf x' } }, 'dangerous'), true)

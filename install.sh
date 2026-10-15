@@ -38,7 +38,9 @@ Penggunaan:
   ./install.sh [opsi]
 
 Opsi:
-  (tanpa opsi)       Pasang dependensi, build project, dan buat symlink ~/.local/bin/vallenatrix
+  (tanpa opsi)       Tampilkan menu installer
+  --install-vallenatrix  Pasang Vallenatrix saja
+  --install-9router      Pasang 9router lalu Vallenatrix CLI
   --uninstall        Hapus symlink vallenatrix dari ~/.local/bin (data konfigurasi tetap aman)
   --purge            Hapus symlink serta data konfigurasi pengguna ($CONFIG_DIR) dengan konfirmasi
   --help, -h         Tampilkan bantuan ini
@@ -83,6 +85,41 @@ purge_action() {
   fi
   echo "Purge selesai."
 }
+
+INSTALL_MODE="${1:-}"
+if [ -z "$INSTALL_MODE" ]; then
+  echo "==============================================="
+  echo "             Vallenatrix Installer             "
+  echo "==============================================="
+  echo "1) Install Vallenatrix"
+  echo "2) Install 9router + Vallenatrix CLI"
+  read -r -p "Pilih [1/2]: " choice
+  case "$choice" in
+    1) INSTALL_MODE="--install-vallenatrix" ;;
+    2) INSTALL_MODE="--install-9router" ;;
+    *) echo "Pilihan tidak valid."; exit 2 ;;
+  esac
+fi
+
+if [ "$INSTALL_MODE" = "--install-9router" ]; then
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "Error: npm belum terpasang."
+    exit 1
+  fi
+  npm i -g 9router@latest --prefer-online
+  echo "9router terpasang."
+  bash "$SCRIPT_DIR/setup9router/install.sh"
+  echo "Vallenatrix pakai endpoint OpenAI-compatible 9router: http://127.0.0.1:20128/v1"
+  INSTALL_MODE="--install-vallenatrix"
+fi
+
+if [ "$INSTALL_MODE" = "--install-vallenatrix" ]; then
+  set --
+elif [ "$INSTALL_MODE" = "--uninstall" ]; then
+  set -- --uninstall
+elif [ "$INSTALL_MODE" = "--purge" ]; then
+  set -- --purge
+fi
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   show_help

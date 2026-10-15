@@ -972,7 +972,7 @@ modelSelect.addEventListener('change', async () => {
 
 // Chat Input Handlers
 async function sendChatMessage() {
-  if (agentRequestActive) {
+  if (agentRequestActive && !pendingApproval) {
     await window.api.chatAgent('/stop', undefined, activeTerminalId)
     return
   }
@@ -1244,13 +1244,18 @@ window.api.onAgentStatus((status) => {
       }
     }
   } else if (status.type === 'terminal_end') {
+    let completionText = 'Perintah terminal agent selesai. Output bisa dilihat.'
+    try {
+      const result = JSON.parse(status.message || '')
+      if (result.background && result.session_id) completionText = `Background process masih jalan · ID ${result.session_id} · process_manage: poll / wait / kill.`
+    } catch {}
     if (isActive) {
-      agentTerminalNoticeText.textContent = 'Perintah terminal agent selesai. Output bisa dilihat.'
+      agentTerminalNoticeText.textContent = completionText
       agentTerminalStop.disabled = true
       agentTerminalNoticeStop.disabled = true
     } else {
       backgroundNoticeTerminalId = statusTerminalId
-      agentTerminalNoticeText.textContent = `Perintah agent ${getTerminalLabel(statusTerminalId)} selesai.`
+      agentTerminalNoticeText.textContent = `${getTerminalLabel(statusTerminalId)}: ${completionText}`
       agentTerminalNotice.classList.remove('hidden')
     }
   } else if (status.type === 'approval') {

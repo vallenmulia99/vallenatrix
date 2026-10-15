@@ -88,6 +88,18 @@ test('verification: no dir means memory-only, never throws', () => {
   assert.match(ledger.formatForInjection(), /build ok/)
 })
 
+test('verification: TypeScript edits require successful typecheck even when other evidence exists', () => {
+  const ledger = new VerificationLedger('session-ts')
+  ledger.record('npm test', 0, 'tests pass')
+  ledger.beginTurn()
+  assert.equal(ledger.shouldNudge(true, true), true)
+  ledger.record('npm -w vallenagent run typecheck', 0, 'tsc clean')
+  ledger.beginTurn()
+  assert.equal(ledger.shouldNudge(true, true), true)
+  ledger.record('npm -w vallenagent run typecheck', 0, 'tsc clean')
+  assert.equal(ledger.shouldNudge(true, true, true), false)
+})
+
 test('verification: empty ledger injects nothing', t => {
   const dir = mkdtempSync(join(tmpdir(), 'vallen-verify-'))
   t.after(() => rmSync(dir, { recursive: true, force: true }))

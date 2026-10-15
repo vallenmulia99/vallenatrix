@@ -308,6 +308,8 @@ export class AIAgent {
   private checkpointDir: string
   private verification: VerificationLedger
   private verificationBaselineChanged = false
+  private verificationTypescriptChanged = false
+  private verificationTypescriptVerified = false
 
   private gameDevMode: boolean = false
   public toolWhitelist: string[] | undefined
@@ -473,6 +475,10 @@ export class AIAgent {
       }
     }
     this.isInterrupted = false
+    this.verification.beginTurn()
+    this.verificationBaselineChanged = false
+    this.verificationTypescriptChanged = false
+    this.verificationTypescriptVerified = false
     const turnModel = this.provider.model
     const configuredContextWindow = this.config.context_windows?.[turnModel]
     const fallbackContextWindow = this.config.default_context_window
@@ -695,14 +701,22 @@ export class AIAgent {
       }
 
       // Verification nudge: a model that edited files and never ran a test/build must not claim "done" silently.
-      if (!toolCalls?.length && toolCallCount > 0 && !this.isSubagent && this.verification.shouldNudge(this.verificationBaselineChanged)) {
+      if (!toolCalls?.length && toolCallCount > 0 && !this.isSubagent && this.verification.shouldNudge(this.verificationBaselineChanged, this.verificationTypescriptChanged, this.verificationTypescriptVerified)) {
         safeCallback(callbacks?.onThinking, 'No verification evidence yet; asking for a test/build run.')
         this.conversationHistory.push(sanitizedAssistantMsg)
         this.conversationHistory.push({
           role: 'user',
-          content: '[Verification required] You changed files but ran no verification command (test/build/lint/typecheck). Run the relevant command now, then report the real result. If nothing can be run, say so explicitly instead of claiming completion.'
+          content: this.verificationTypescriptChanged
+            ? '[Verification required] You changed TypeScript files. Run the repository typecheck now (for example, npm -w vallenagent run typecheck), then fix any reported errors and rerun it. A successful test/build without a successful typecheck does not satisfy this requirement.'
+            : '[Verification required] You changed files but ran no verification command (test/build/lint/typecheck). Run the relevant command now, then report the real result. If nothing can be run, say so explicitly instead of claiming completion.'
         })
         continue
+      }
+
+      if (!toolCalls?.length && toolCallCount > 0 && this.verificationTypescriptChanged && !this.verificationTypescriptVerified) {
+        const response = `${(assistantMessage.content || '').trim()}\n\nTask incomplete: TypeScript changes lack a successful typecheck in this turn.`.trim()
+        try { this.saveCurrentSession() } catch {}
+        return { response, completionStatus: 'incomplete', iterations, totalTokens, toolCalls: toolCallCount, promptTokens, completionTokens }
       }
 
       let acceptedAutoGoal = false
@@ -925,6 +939,18 @@ export class AIAgent {
       return emitRejected(JSON.stringify({ error: `Invalid JSON arguments: ${err.message}. Resend with valid JSON.` }))
     }
 
+    if (toolName === 'tool_call') {
+      const target = String(toolArgs.name || '')
+      const available = registry.getDeferredTools(this.toolWhitelist).some(tool => tool.name === target)
+      if (!available || !toolArgs.arguments || typeof toolArgs.arguments !== 'object' || Array.isArray(toolArgs.arguments)) {
+        return emitRejected(JSON.stringify({ error: `Deferred tool unavailable or invalid arguments: ${target}` }), toolArgs)
+      }
+      return this.executeToolCall({
+        ...toolCall,
+        function: { name: target, arguments: JSON.stringify(toolArgs.arguments) }
+      }, callbacks)
+    }
+
     if (this.isInterrupted) return emitRejected(JSON.stringify({ skipped: 'User interrupted execution' }), toolArgs)
     const toolStart = Date.now()
     safeCallback(callbacks?.onToolStart, {
@@ -951,6 +977,7 @@ export class AIAgent {
       fileReadCoverage: this.fileReadCoverage,
       providerConfig: { ...getActiveProvider(this.config), base_url: this.provider.baseURL, model: this.provider.model },
       isSubagent: this.isSubagent,
+      toolWhitelist: this.toolWhitelist,
       onTerminalOutput: (stream, chunk) => safeCallback(callbacks?.onTerminalOutput, { id: toolCall.id, stream, chunk }),
       delegateAgentFactory: async (subGoal: string) => {
         const sub = new AIAgent({ config: this.config, maxIterations: 30, isSubagent: true })
@@ -979,9 +1006,29 @@ export class AIAgent {
     if (toolName === 'write_file' || toolName === 'patch') {
       try {
         const parsed = JSON.parse(result)
-        if (!parsed.error) this.verificationBaselineChanged = true
+        if (!parsed.error) {
+          this.verificationBaselineChanged = true
+          if (/\.(?:ts|tsx|mts|cts)$/i.test(String(parsed.path || toolArgs.path || ''))) {
+            this.verificationTypescriptChanged = true
+            this.verificationTypescriptVerified = false
+          }
+        }
       } catch {
         // Unparseable tool output means we cannot prove an edit landed.
+      }
+    }
+    if (toolName === 'patch_batch' || toolName === 'apply_patch') {
+      try {
+        const parsed = JSON.parse(result)
+        if (parsed.success && Array.isArray(parsed.files)) {
+          this.verificationBaselineChanged = true
+          if (parsed.files.some((file: any) => /\.(?:ts|tsx|mts|cts)$/i.test(String(file.path || '')))) {
+            this.verificationTypescriptChanged = true
+            this.verificationTypescriptVerified = false
+          }
+        }
+      } catch {
+        // Invalid tool output cannot prove files changed.
       }
     }
     // Record real verification evidence (test/build/lint runs), never blocking the turn.
@@ -991,6 +1038,7 @@ export class AIAgent {
         const exitCode = typeof parsed.exit_code === 'number' ? parsed.exit_code : null
         const output = `${parsed.output ?? ''}\n${parsed.stderr ?? ''}`
         this.verification.record(String(toolArgs.command || ''), exitCode, output)
+        if (/\b(?:tsc|typecheck)\b/i.test(String(toolArgs.command || ''))) this.verificationTypescriptVerified = exitCode === 0
       } catch {
         // Non-JSON tool output is not verification evidence.
       }
@@ -1060,7 +1108,7 @@ If a tool, install, or command fails, diagnose directly and try alternatives. NE
 You MUST use your tools to take action — do not describe what you would do or plan to do without executing it. When you say you will perform an action (e.g. read file, patch, run tests), you MUST immediately make the corresponding tool call in the same response.
 
 # Choose the Right Tool
-For codebase work, inspect with search_files and read_file; make focused edits with patch. Before write_file overwrites an existing file, read its complete current contents with read_file; new files may be written directly. Prefer patch for targeted edits. Do NOT use terminal for file browsing, reading, searching, editing, or writing when a dedicated tool exists. Use terminal for commands that need execution, such as tests, builds, git operations, package scripts, and runtime checks. Before each command, know what result it is meant to verify; avoid repeated exploratory shell commands. Keep tool calls focused and report changed files plus verification in the final response.
+For codebase work, inspect with search_files and read_file; make focused edits with patch. Before write_file overwrites an existing file, read its complete current contents with read_file; new files may be written directly. Prefer patch for targeted edits. Do NOT use terminal for file browsing, reading, searching, editing, or writing when a dedicated tool exists. Use terminal for commands that need execution, such as tests, builds, git operations, package scripts, and runtime checks. Use terminal background=true for long-running servers, notify=true for exit callbacks, then process_manage to poll, wait, or kill; process IDs belong to the current session. Deferred capabilities are not in the default schema: discover them with tool_search, inspect schema with tool_describe, then invoke via tool_call. For TypeScript edits, run a successful typecheck after the last edit; otherwise report task incomplete. Use patch_batch for related targeted edits and apply_patch for V4A Update/Add/Delete File operations. Before each command, know what result it is meant to verify; avoid repeated exploratory shell commands. Keep tool calls focused and report changed files plus verification in the final response.
 
 # Indonesian Casual Language Understanding
 Pahami bahasa santai/casual Indonesia (bang, lu, gw, gas, gasin, lanjut, yoi, sip, otw, terapkan, beresin). Jangan bertele-tele atau meminta konfirmasi berulang. Jika user memberi perintah atau mengatakan "gas"/"lanjut", langsung eksekusi tool yang tepat (patch, write_file, terminal, dsb) secara tuntas.

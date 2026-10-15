@@ -69,6 +69,10 @@ test('Display & Pretty Printing - Hermes Style', (t) => {
   assert.ok(endTerm.includes('$'))
   assert.ok(endTerm.includes('npm test'))
   assert.ok(endTerm.includes('36.9s'))
+  const backgroundTerm = formatToolEnd('terminal', { command: 'npm run dev', background: true, notify: true }, JSON.stringify({ background: true, running: true, session_id: 'process-123' }), 0.1)
+  assert.match(backgroundTerm, /process-123/)
+  assert.match(backgroundTerm, /background/i)
+  assert.match(backgroundTerm, /notify/i)
 
   // Test formatResponseBox: ╭─ ☤ Vallenatrix ───╮ ... ╰───╯
   const box = formatResponseBox('All tests passed cleanly.\nReady to proceed.', ' ☤ Vallenatrix ', 60)

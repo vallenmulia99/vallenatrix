@@ -14,6 +14,7 @@ import { SkillLoader } from './skills'
 import { MemoryStore } from './memory'
 import { TodoStore } from './todo'
 import { searchSessions, formatHits } from './session_search'
+import { manageProcess, startBackgroundProcess } from './process_manager'
 
 function expandIpv6(ip: string): string[] {
   const parts = ip.split('::')
@@ -1058,7 +1059,9 @@ export function registerBuiltinTools(
       properties: {
         command: { type: 'string', description: 'The shell command to execute' },
         workdir: { type: 'string', description: 'Working directory for this command' },
-        timeout: { type: 'integer', description: 'Timeout in seconds (default: 120)' }
+        timeout: { type: 'integer', description: 'Timeout in seconds (default: 120)' },
+        background: { type: 'boolean', description: 'Start command in background and return a session_id for process_manage' },
+        notify: { type: 'boolean', description: 'Emit process exit status through terminal output callback when background process ends' }
       },
       required: ['command']
     }
@@ -1094,6 +1097,13 @@ export function registerBuiltinTools(
             cwd: resolved
           })
         }
+      }
+
+      if (args.background === true) {
+        const onExit = args.notify === true ? (sessionId: string, exitCode: number | null, processSignal: string | null) => {
+          context.onTerminalOutput?.('stderr', `\n[Background process ${sessionId} exited with exit code ${exitCode ?? 'unknown'}${processSignal ? ` (${processSignal})` : ''}]\n`)
+        } : undefined
+        return JSON.stringify(startBackgroundProcess(rawCommand, workdir, context.sessionId || 'default', onExit))
       }
 
       // Probe command to detect chained cd transitions
@@ -1210,7 +1220,28 @@ export function registerBuiltinTools(
     }
   })
 
-  // 6. execute_code
+  // 6. process_manage
+  const processManageSchema: ToolSchema = {
+    name: 'process_manage',
+    description: 'List, poll, wait for, or stop background terminal processes by session_id.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'poll', 'wait', 'kill'] },
+        session_id: { type: 'string' },
+        timeout: { type: 'integer', description: 'Maximum seconds to wait (0–300)' }
+      },
+      required: ['action']
+    }
+  }
+  registry.register({
+    name: 'process_manage',
+    schema: processManageSchema,
+    toolset: 'terminal',
+    handler: async (args, context) => JSON.stringify(await manageProcess(args, context.sessionId || 'default'))
+  })
+
+  // 7. execute_code
   const executeCodeSchema: ToolSchema = {
     name: 'execute_code',
     description: 'Execute Python code in a subprocess (not sandboxed) with stdlib and environment access. Stdout/stderr returned with head/tail truncation at 50KB.',
@@ -2088,22 +2119,20 @@ export function registerBuiltinTools(
         }
         const tasks = Array.isArray(args.tasks) ? args.tasks : []
         const summaries: Array<{ goal: string; summary: string }> = []
+        const delegateFn = context?.delegateAgentFactory || delegateAgentFactory
 
-        for (const t of tasks) {
-          const delegateFn = context?.delegateAgentFactory || delegateAgentFactory
-          if (delegateFn) {
+        for (let start = 0; start < tasks.length; start += 3) {
+          const batch = tasks.slice(start, start + 3)
+          const results = await Promise.all(batch.map(async t => {
+            if (!delegateFn) return { goal: t.goal, summary: `Subagent delegated task completed with goal: ${t.goal}` }
             try {
               const summary = await delegateFn(t.goal + (t.context ? `\nContext: ${t.context}` : ''))
-              summaries.push({ goal: t.goal, summary })
+              return { goal: t.goal, summary }
             } catch (err: any) {
-              summaries.push({ goal: t.goal, summary: `Subagent failed: ${err.message}` })
+              return { goal: t.goal, summary: `Subagent failed: ${err.message}` }
             }
-          } else {
-            summaries.push({
-              goal: t.goal,
-              summary: `Subagent delegated task completed with goal: ${t.goal}`
-            })
-          }
+          }))
+          summaries.push(...results)
         }
 
         return JSON.stringify({ results: summaries })
@@ -2529,6 +2558,198 @@ export function registerBuiltinTools(
       }
     }
   })
+
+  const patchBatchSchema: ToolSchema = {
+    name: 'patch_batch', description: 'Atomically apply targeted fuzzy replacements across multiple files. Preflights every file before writing.',
+    parameters: { type: 'object', properties: { files: { type: 'array', items: { type: 'object', properties: {
+      path: { type: 'string' }, old_string: { type: 'string' }, new_string: { type: 'string' }, replace_all: { type: 'boolean' }
+    }, required: ['path', 'old_string', 'new_string'] } } }, required: ['files'] }
+  }
+  registry.register({ name: 'patch_batch', schema: patchBatchSchema, toolset: 'file', handler: async (args, context) =>
+    JSON.stringify(applyPatchBatch(args.files, context.workingDir || process.cwd(), context))
+  })
+
+  const applyPatchSchema: ToolSchema = {
+    name: 'apply_patch', description: 'Apply V4A multi-file patches with Update, Add, and Delete File sections; supports contextual @@ hunks.',
+    parameters: { type: 'object', properties: { patch: { type: 'string' } }, required: ['patch'] }
+  }
+  registry.register({ name: 'apply_patch', schema: applyPatchSchema, toolset: 'file', handler: async (args, context) =>
+    JSON.stringify(applyV4APatch(String(args.patch || ''), context.workingDir || process.cwd(), context))
+  })
+
+  const deferredTools = (context?: ToolContext) => registry.getDeferredTools(context?.toolWhitelist)
+  registry.register({
+    name: 'tool_search', toolset: 'core',
+    schema: { name: 'tool_search', description: 'Find deferred tools by name or capability. Call tool_describe before tool_call.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+    handler: async (args, context) => {
+      const query = String(args.query || '').toLowerCase().trim()
+      if (!query) return JSON.stringify({ error: 'query is required' })
+      const words = query.split(/\s+/).filter(Boolean)
+      const results = deferredTools(context).map(tool => ({
+        name: tool.name, description: tool.schema.description,
+        score: words.filter(word => `${tool.name} ${tool.schema.description}`.toLowerCase().includes(word)).length
+      })).filter(item => item.score > 0).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)).slice(0, 10)
+      return JSON.stringify({ results: results.map(({ score: _score, ...item }) => item) })
+    }
+  })
+  registry.register({
+    name: 'tool_describe', toolset: 'core',
+    schema: { name: 'tool_describe', description: 'Return full schema for one deferred tool.', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } },
+    handler: async (args, context) => {
+      const tool = deferredTools(context).find(item => item.name === args.name)
+      return tool ? JSON.stringify(tool.schema) : JSON.stringify({ error: 'Deferred tool not found or unavailable' })
+    }
+  })
+  registry.register({
+    name: 'tool_call', toolset: 'core',
+    schema: { name: 'tool_call', description: 'Execute a deferred tool after tool_search and tool_describe.', parameters: { type: 'object', properties: { name: { type: 'string' }, arguments: { type: 'object' } }, required: ['name', 'arguments'] } },
+    handler: async () => JSON.stringify({ error: 'tool_call must be dispatched by the agent runtime' })
+  })
+}
+
+function applyV4APatch(text: string, baseDir: string, context: ToolContext): Record<string, unknown> {
+  const lines = text.replace(/\r\n/g, '\n').split('\n')
+  if (lines[0] !== '*** Begin Patch' || lines[lines.length - 1] !== '*** End Patch') return { error: 'Invalid V4A patch envelope' }
+  type V4AEdit = { path: string; operation: 'update' | 'add' | 'delete'; original?: string; current?: string }
+  const edits = new Map<string, V4AEdit>()
+  let active: V4AEdit | null = null
+  let hunk: string[] = []
+  const applyHunk = () => {
+    if (!active || !hunk.length) return
+    if (active.operation !== 'update') throw new Error('Only Update File sections may contain @@ hunks')
+    const oldLines: string[] = []
+    const newLines: string[] = []
+    for (const line of hunk) {
+      if (line.startsWith(' ') || line.startsWith('-')) oldLines.push(line.slice(1))
+      if (line.startsWith(' ') || line.startsWith('+')) newLines.push(line.slice(1))
+    }
+    const fileLines = (active.current || '').split('\n')
+    let matches = -1
+    for (let i = 0; i <= fileLines.length - oldLines.length; i++) {
+      if (oldLines.every((line, j) => fileLines[i + j] === line)) {
+        if (matches !== -1) throw new Error('Patch hunk matches more than once; add context lines')
+        matches = i
+      }
+    }
+    if (matches < 0) throw new Error('Patch hunk context not found')
+    fileLines.splice(matches, oldLines.length, ...newLines)
+    active.current = fileLines.join('\n')
+    hunk = []
+  }
+  const finalize = () => { applyHunk(); active = null }
+  try {
+    for (let i = 1; i < lines.length - 1; i++) {
+      const line = lines[i]
+      const header = /^\*\*\* (Update|Add|Delete) File: (.+)$/.exec(line)
+      if (header) {
+        finalize()
+        let rawPath = header[2]
+        if (rawPath.startsWith('~/')) rawPath = join(homedir(), rawPath.slice(2))
+        const path = isAbsolute(rawPath) ? rawPath : resolve(baseDir, rawPath)
+        if (edits.has(path)) throw new Error(`Duplicate file section: ${rawPath}`)
+        const operation = header[1].toLowerCase() as V4AEdit['operation']
+        active = { path, operation }
+        if (operation !== 'add') {
+          const original = readFileSync(path, 'utf8')
+          active.original = original
+          if (operation === 'update') active.current = original
+        }
+        edits.set(path, active)
+      } else if (line === '*** End of File') {
+        continue
+      } else if (line.startsWith('@@')) {
+        if (!active || active.operation !== 'update') throw new Error('Unexpected @@ outside Update File section')
+        applyHunk()
+      } else {
+        if (!active) throw new Error(`Unexpected patch line: ${line}`)
+        if (active.operation === 'add') {
+          if (!line.startsWith('+')) throw new Error('Add File contents must use + lines')
+          active.current = active.current === undefined ? line.slice(1) : `${active.current}\n${line.slice(1)}`
+        } else if (active.operation === 'update') {
+          if (![' ', '+', '-'].includes(line[0])) throw new Error(`Invalid hunk line: ${line}`)
+          hunk.push(line)
+        } else {
+          throw new Error('Delete File section cannot contain content')
+        }
+      }
+    }
+    finalize()
+    if (!edits.size) return { error: 'Patch contains no file operations' }
+    const files = [...edits.values()].map(edit => ({ path: edit.path, operation: edit.operation, old_string: edit.original, new_string: edit.current }))
+    return applyPatchBatch(files, baseDir, context)
+  } catch (err: any) {
+    return { error: err.message || 'V4A patch failed; no files were changed.' }
+  }
+}
+
+function applyPatchBatch(files: any, baseDir: string, context: ToolContext): Record<string, unknown> {
+  if (!Array.isArray(files) || files.length < 1 || files.length > 20) return { error: 'files must contain 1–20 edits' }
+  type StagedEdit = { path: string; temp: string; backup: string; operation: 'update' | 'add' | 'delete'; before: Buffer | null; after: string | null; mode: number; diff: string; originalMoved: boolean; newInstalled: boolean }
+  const seen = new Set<string>()
+  const staged: StagedEdit[] = []
+  const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const edit = files[i]
+      let rawPath = String(edit.path || '')
+      if (rawPath.startsWith('~/')) rawPath = join(homedir(), rawPath.slice(2))
+      const path = isAbsolute(rawPath) ? rawPath : resolve(baseDir, rawPath)
+      if (seen.has(path)) throw new Error(`Duplicate path in batch: ${rawPath}`)
+      seen.add(path)
+      const operation = (edit.operation || 'update') as StagedEdit['operation']
+      if (!['update', 'add', 'delete'].includes(operation)) throw new Error(`Unsupported file operation: ${operation}`)
+      const temp = `${path}.batch-${suffix}-${i}.tmp`
+      const backup = `${path}.batch-${suffix}-${i}.original`
+      if (operation === 'add') {
+        try { lstatSync(path); throw new Error(`Add File target already exists: ${rawPath}`) }
+        catch (err: any) { if (err.code !== 'ENOENT') throw err }
+        if (!statSync(dirname(path)).isDirectory()) throw new Error(`Parent directory is not a directory: ${dirname(path)}`)
+        const after = String(edit.new_string ?? '')
+        staged.push({ path, temp, backup, operation, before: null, after, mode: 0o666 & ~process.umask(), diff: `+++ ${rawPath}\n${after}`, originalMoved: false, newInstalled: false })
+        continue
+      }
+      const info = lstatSync(path)
+      if (!info.isFile() || info.isSymbolicLink()) throw new Error(`Refusing non-regular file: ${rawPath}`)
+      if (info.size > 10 * 1024 * 1024) throw new Error(`Refusing file over 10 MB: ${rawPath}`)
+      const before = readFileSync(path)
+      if (before.includes(0)) throw new Error(`Cannot patch binary file: ${rawPath}`)
+      const oldText = before.toString('utf8')
+      if (operation === 'delete') {
+        staged.push({ path, temp, backup, operation, before, after: null, mode: info.mode & 0o7777, diff: `--- ${rawPath}\n(deleted)`, originalMoved: false, newInstalled: false })
+      } else {
+        const result = fuzzyReplace(oldText, String(edit.old_string ?? ''), String(edit.new_string ?? ''), isTruthy(edit.replace_all))
+        staged.push({ path, temp, backup, operation, before, after: result.content, mode: info.mode & 0o7777, diff: result.diff, originalMoved: false, newInstalled: false })
+      }
+    }
+    for (const item of staged) {
+      if (item.after === null) continue
+      writeFileSync(item.temp, item.after, { encoding: 'utf8', mode: item.mode })
+      chmodSync(item.temp, item.mode)
+    }
+    try {
+      for (const item of staged) {
+        if (item.before !== null) { renameSync(item.path, item.backup); item.originalMoved = true }
+        if (item.after !== null) { renameSync(item.temp, item.path); item.newInstalled = true }
+      }
+    } catch (err) {
+      for (const item of [...staged].reverse()) {
+        if (item.newInstalled) try { unlinkSync(item.path) } catch {}
+        if (item.originalMoved) try { renameSync(item.backup, item.path) } catch {}
+      }
+      throw err
+    }
+    for (const item of staged) {
+      if (item.originalMoved) try { unlinkSync(item.backup) } catch {}
+      if (item.after !== null) recordWrittenFile(context, item.path, item.after)
+    }
+    return { success: true, files: staged.map(item => ({ path: item.path, operation: item.operation, diff: item.diff })) }
+  } catch (err: any) {
+    for (const item of staged) {
+      try { unlinkSync(item.temp) } catch {}
+      if (item.originalMoved && existsSync(item.backup) && !existsSync(item.path)) try { renameSync(item.backup, item.path) } catch {}
+    }
+    return { error: err.message || 'Batch patch failed; no files were changed.' }
+  }
 }
 
 function globToRegex(glob: string): RegExp {

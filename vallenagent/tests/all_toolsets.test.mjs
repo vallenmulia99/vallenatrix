@@ -25,7 +25,8 @@ test('All Hermes Toolsets Registration & Execution', async (t) => {
   // Verify all toolsets present
   const requiredTools = [
     'read_file', 'write_file', 'patch', 'search_files', // file
-    'terminal',                                          // terminal
+    'terminal', 'process_manage',                       // terminal
+    'patch_batch', 'apply_patch', 'tool_search', 'tool_describe', 'tool_call',
     'execute_code',                                      // code_execution
     'web_search', 'web_extract',                         // web
     'clarify',                                           // clarify

@@ -58,6 +58,7 @@ function extractCounts(output: string): string {
 export class VerificationLedger {
   private entries: VerificationEntry[] = []
   private nudged = false
+  private turnStart = 0
 
   constructor(private readonly sessionId: string, private readonly dir?: string) {
     this.load()
@@ -128,10 +129,16 @@ export class VerificationLedger {
   }
 
   /** true = sudah waktunya mendorong agent sekali untuk verifikasi. */
-  shouldNudge(hadEdits: boolean): boolean {
-    if (this.nudged || !hadEdits || this.entries.length > 0) return false
+  shouldNudge(hadEdits: boolean, requireTypecheck = false, typecheckVerified = false): boolean {
+    const hasEvidence = this.entries.slice(this.turnStart).length > 0
+    if (this.nudged || !hadEdits || (requireTypecheck ? typecheckVerified : hasEvidence)) return false
     this.nudged = true
     return true
+  }
+
+  beginTurn(): void {
+    this.nudged = false
+    this.turnStart = this.entries.length
   }
 
   get count(): number {

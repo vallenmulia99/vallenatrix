@@ -149,7 +149,9 @@ export function formatToolEnd(
     case 'terminal': {
       verb = '$'
       detail = truncateString(args.command || '', 55)
-      if (parsed && parsed.exit_code !== undefined && parsed.exit_code !== 0) {
+      if (parsed?.background && parsed.session_id) {
+        detail += ` ${ANSI.GREEN}[background ${parsed.session_id}${args.notify ? ', notify on exit' : ''}]${ANSI.RESET}`
+      } else if (parsed && parsed.exit_code !== undefined && parsed.exit_code !== 0) {
         detail += ` ${ANSI.RED}[exit ${parsed.exit_code}]${ANSI.RESET}`
       }
       break

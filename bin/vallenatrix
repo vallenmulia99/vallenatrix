@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Resolve script path even if symlinked
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+BIN_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+REPO_ROOT="$(cd -P "$BIN_DIR/.." >/dev/null 2>&1 && pwd)"
+
+MAIN_BUILD="$REPO_ROOT/vallenterminal/out/main/index.js"
+PACKAGE_JSON="$REPO_ROOT/package.json"
+
+VERSION="0.1.0"
+if [ -f "$PACKAGE_JSON" ]; then
+  VERSION=$(grep '"version"' "$PACKAGE_JSON" | head -n 1 | sed -E 's/.*"version": "([^"]+)".*/\1/')
+fi
+
+show_help() {
+  cat << EOF
+Vallenatrix - Terminal transparan kustom dengan anime / media background
+
+Penggunaan:
+  vallenatrix [opsi]
+
+Opsi:
+  --foreground, -f        Jalankan terminal di foreground (tampilkan log ke stdout/stderr)
+  --replace-terminal, -r  Tutup terminal pemanggil dan ganti dengan Vallenatrix
+  --new-window            Buka jendela Vallenatrix baru
+  --version, -v, -versi   Tampilkan versi vallenatrix
+  --help, -h              Tampilkan bantuan ini
+
+Contoh:
+  vallenatrix               # Jalankan di background (lepas dari shell)
+  vallenatrix -r            # Jalankan dan gantikan terminal saat ini
+  vallenatrix --foreground  # Jalankan di foreground untuk debugging
+  vallenatrix --new-window # Buka jendela terminal baru
+EOF
+}
+
+FOREGROUND=0
+REPLACE_TERMINAL=0
+NEW_WINDOW=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --help|-h)
+      show_help
+      exit 0
+      ;;
+    --version|-v|-versi|--versi)
+      echo "vallenatrix v$VERSION"
+      exit 0
+      ;;
+    --foreground|-f)
+      FOREGROUND=1
+      ;;
+    --replace-terminal|-r)
+      REPLACE_TERMINAL=1
+      ;;
+    --new-window)
+      NEW_WINDOW=1
+      ;;
+    *)
+      echo "Opsi tidak dikenal: $arg"
+      echo "Jalankan 'vallenatrix --help' untuk melihat daftar opsi."
+      exit 1
+      ;;
+  esac
+done
+
+# Check build artifact
+if [ ! -f "$MAIN_BUILD" ]; then
+  echo "Error: Vallenatrix belum di-build atau file build tidak ditemukan."
+  echo "Silakan jalankan installer terlebih dahulu:"
+  echo "  cd \"$REPO_ROOT\" && ./install.sh"
+  exit 1
+fi
+
+ELECTRON_BIN="$REPO_ROOT/node_modules/.bin/electron"
+if [ ! -x "$ELECTRON_BIN" ]; then
+  ELECTRON_BIN="$REPO_ROOT/vallenterminal/node_modules/.bin/electron"
+fi
+
+if [ ! -x "$ELECTRON_BIN" ]; then
+  echo "Error: Binary Electron tidak ditemukan di node_modules."
+  echo "Silakan jalankan './install.sh' di root repo untuk menginstal dependensi."
+  exit 1
+fi
+
+if [ "$FOREGROUND" -eq 1 ]; then
+  if [ "$NEW_WINDOW" -eq 1 ]; then
+    exec "$ELECTRON_BIN" "$MAIN_BUILD" --new-window
+  fi
+  exec "$ELECTRON_BIN" "$MAIN_BUILD"
+else
+  CALLER_WIN="${WINDOWID:-}"
+  if [ "$REPLACE_TERMINAL" -eq 1 ] && [ -z "$CALLER_WIN" ] && command -v xdotool >/dev/null 2>&1; then
+    CALLER_WIN=$(xdotool getactivewindow 2>/dev/null || true)
+  fi
+
+  # Start Electron completely detached in a new session (setsid)
+  if [ "$NEW_WINDOW" -eq 1 ]; then
+    setsid "$ELECTRON_BIN" "$MAIN_BUILD" --new-window </dev/null >/dev/null 2>&1 &
+  else
+    setsid "$ELECTRON_BIN" "$MAIN_BUILD" </dev/null >/dev/null 2>&1 &
+  fi
+
+  if [ "$REPLACE_TERMINAL" -eq 1 ] && [ -n "$CALLER_WIN" ] && command -v xdotool >/dev/null 2>&1; then
+    xdotool windowclose "$CALLER_WIN" 2>/dev/null || true
+  fi
+  exit 0
+fi

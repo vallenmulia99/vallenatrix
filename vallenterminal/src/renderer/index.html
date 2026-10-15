@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="icon" type="image/png" href="/assets/vallenatrix.png">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' vallen-media: data:; media-src 'self' vallen-media:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:;">
+  <title>Vallenatrix</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      user-select: none;
+    }
+
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: transparent;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    /* Background Layers */
+    #bg-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    #bg-video {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: none;
+    }
+
+    #bg-image {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-position: center;
+      background-repeat: no-repeat;
+      background-size: cover;
+      display: none;
+    }
+
+    /* Dim and blur overlay */
+    #overlay-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      pointer-events: none;
+      background-color: rgba(15, 17, 23, 0.4);
+      transition: background-color 0.2s ease, backdrop-filter 0.2s ease;
+    }
+
+    /* App Container */
+    #app {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 3;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Titlebar */
+    #titlebar {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      -webkit-app-region: drag;
+      background: #0a0c12 !important;
+      border-bottom: 1px solid #1a1e29;
+      color: #ffffff;
+      font-size: 12px;
+      letter-spacing: 0.5px;
+      opacity: 1 !important;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+      z-index: 10;
+    }
+
+    .titlebar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+    }
+
+    .titlebar-icon {
+      width: 18px;
+      height: 18px;
+      border-radius: 4px;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
+    .titlebar-title {
+      color: #ffffff !important;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 0.8px;
+      opacity: 1 !important;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+    }
+
+    .titlebar-new-terminal {
+      -webkit-app-region: no-drag;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 5px;
+      padding: 4px 8px;
+      color: #d8f7fa;
+      background: rgba(5, 217, 232, 0.1);
+      font: 11px system-ui, sans-serif;
+      cursor: pointer;
+    }
+    .titlebar-new-terminal:hover { background: rgba(5, 217, 232, 0.22); }
+
+    #terminal-tabs {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+      max-width: min(52vw, 620px);
+      overflow-x: auto;
+      -webkit-app-region: no-drag;
+    }
+    #terminal-tabs * { -webkit-app-region: no-drag; }
+    .terminal-tab {
+      flex: 0 0 auto;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 5px;
+      padding: 4px 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: rgba(255, 255, 255, 0.74);
+      background: rgba(255, 255, 255, 0.04);
+      font: 11px system-ui, sans-serif;
+      cursor: pointer;
+    }
+    .terminal-tab-close {
+      position: relative;
+      z-index: 2;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      min-width: 22px;
+      height: 22px;
+      border-radius: 4px;
+      color: rgba(255, 255, 255, 0.62);
+      padding: 0;
+      border: 0;
+      background: transparent;
+      font: 16px/1 system-ui, sans-serif;
+      cursor: pointer;
+      -webkit-app-region: no-drag;
+      appearance: none;
+    }
+    .terminal-tab-close:hover { color: #fff; background: rgba(255, 90, 90, 0.75); }
+    .terminal-tab.active {
+      color: #e5fcff;
+      border-color: rgba(5, 217, 232, 0.55);
+      background: rgba(5, 217, 232, 0.17);
+    }
+    .terminal-tab.running::after { content: ' •'; color: #05d9e8; }
+
+    .titlebar-controls {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      -webkit-app-region: no-drag;
+    }
+
+    .btn-icon {
+      background: transparent;
+      border: none;
+      color: #ffffff !important;
+      width: 28px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+      opacity: 1 !important;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .btn-icon:hover {
+      background: rgba(255, 255, 255, 0.18);
+      color: #ffffff !important;
+    }
+
+    .btn-close:hover {
+      background: #e81123 !important;
+      color: #ffffff !important;
+    }
+
+    /* Terminal Container */
+    #terminal-container {
+      flex: 1;
+      width: 100%;
+      padding: 6px 8px;
+      overflow: hidden;
+      position: relative;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* Chat Input Area */
+    #chat-input-area {
+      width: 100%;
+      min-height: 48px;
+      height: auto;
+      background: rgba(10, 12, 18, 0.95);
+      backdrop-filter: blur(12px);
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 6px 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 5px;
+      flex-shrink: 0;
+      z-index: 4;
+    }
+
+    #chat-attachments {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      max-height: 28px;
+    }
+
+    #chat-attachments:empty { display: none; }
+
+    #agent-terminal-notice {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 28px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      color: rgba(255, 255, 255, 0.9);
+      background: rgba(5, 217, 232, 0.09);
+      font-size: 11px;
+    }
+
+    #agent-terminal-notice.hidden { display: none; }
+    #agent-terminal-notice-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .terminal-notice-button, .agent-terminal-action {
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 5px;
+      padding: 3px 7px;
+      color: #fff;
+      background: rgba(255, 255, 255, 0.08);
+      cursor: pointer;
+      font: inherit;
+    }
+
+    #agent-terminal-panel {
+      display: none;
+      flex-direction: column;
+      gap: 5px;
+      max-height: 230px;
+      min-height: 130px;
+      padding: 8px;
+      overflow: hidden;
+      border: 1px solid rgba(5, 217, 232, 0.3);
+      border-radius: 8px;
+      background: rgba(5, 8, 14, 0.97);
+      color: rgba(255, 255, 255, 0.9);
+      font: 11px system-ui, sans-serif;
+    }
+
+    #agent-terminal-panel.visible { display: flex; }
+    #agent-terminal-panel-header { display: flex; align-items: center; gap: 6px; }
+    #agent-terminal-command { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #80e8ef; }
+    #agent-terminal-output {
+      flex: 1;
+      min-height: 60px;
+      margin: 0;
+      padding: 6px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: #d6e1ed;
+      background: rgba(255, 255, 255, 0.04);
+      font: 11px/1.35 'DejaVu Sans Mono', monospace;
+      user-select: text;
+    }
+
+    #agent-terminal-shortcuts { color: rgba(255, 255, 255, 0.58); font-size: 10px; }
+
+    .chat-attachment {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 220px;
+      padding: 4px 8px;
+      border: 1px solid rgba(5, 217, 232, 0.28);
+      border-radius: 999px;
+      background: rgba(5, 217, 232, 0.1);
+      color: rgba(255, 255, 255, 0.88);
+      font: 11px system-ui, sans-serif;
+      white-space: nowrap;
+    }
+
+    .chat-attachment-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .chat-attachment-remove {
+      border: 0;
+      padding: 0 2px;
+      color: rgba(255, 255, 255, 0.72);
+      background: transparent;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    #drag-drop-overlay {
+      position: absolute;
+      inset: 42px 8px 58px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      border: 2px dashed rgba(5, 217, 232, 0.85);
+      border-radius: 14px;
+      color: #fff;
+      background: rgba(5, 15, 24, 0.82);
+      font-size: 18px;
+      font-weight: 650;
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    #drag-drop-overlay.visible { display: flex; }
+
+    /* Status Bar */
+    #status-bar {
+      width: 100%;
+      height: 26px;
+      background: rgba(8, 9, 14, 0.98);
+      backdrop-filter: blur(8px);
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.6);
+      z-index: 4;
+    }
+
+    .status-left, .status-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-label {
+      color: rgba(255, 255, 255, 0.5);
+      font-weight: 500;
+    }
+
+    .status-symbol {
+      color: #eb6f92;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .status-metric {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.75);
+      white-space: nowrap;
+    }
+
+    .model-select-compact {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      color: #05d9e8;
+      padding: 2px 6px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      outline: none;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      max-width: 180px;
+    }
+
+    .model-select-compact:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+
+    .model-select-compact:focus {
+      border-color: #05d9e8;
+      background: rgba(5, 217, 232, 0.05);
+    }
+
+    .model-select-compact option {
+      background: #0f1117;
+      color: #ffffff;
+    }
+
+    .model-list-action {
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.05);
+      color: rgba(255, 255, 255, 0.75);
+      line-height: 18px;
+      cursor: pointer;
+      -webkit-app-region: no-drag;
+    }
+    .model-list-action:hover:not(:disabled) { color: #fff; background: rgba(255, 90, 90, 0.5); }
+    .model-list-action:disabled { opacity: 0.35; cursor: default; }
+    #btn-restore-models:hover:not(:disabled) { background: rgba(5, 217, 232, 0.2); }
+
+    .status-divider {
+      color: rgba(255, 255, 255, 0.2);
+      font-weight: 300;
+    }
+
+    .status-folder {
+      color: #ffd166;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+    }
+
+    .status-progress {
+      color: rgba(255, 255, 255, 0.5);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .status-session {
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 11px;
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chat-input-wrapper {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      width: 100%;
+      max-width: 100%;
+    }
+
+    .chat-input {
+      flex: 1;
+      min-width: 0;
+      min-height: 36px;
+      max-height: 180px;
+      box-sizing: border-box;
+      resize: none;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      line-height: 1.35;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      color: #ffffff;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      outline: none;
+      transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+      user-select: text;
+    }
+
+    .chat-input::placeholder {
+      color: rgba(255, 255, 255, 0.4);
+    }
+
+    .chat-input:focus {
+      border-color: #05d9e8;
+      background: rgba(255, 255, 255, 0.08);
+      box-shadow: 0 0 0 2px rgba(5, 217, 232, 0.15);
+    }
+
+    .slash-autocomplete {
+      position: absolute;
+      bottom: 52px;
+      left: 12px;
+      right: 12px;
+      max-height: 240px;
+      background: rgba(15, 17, 26, 0.95);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      box-shadow: 0 -8px 25px rgba(0, 0, 0, 0.6);
+      overflow-y: auto;
+      z-index: 50;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .slash-autocomplete.hidden {
+      display: none;
+    }
+    .slash-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.15s;
+    }
+    .slash-item:hover, .slash-item.active {
+      background: rgba(5, 217, 232, 0.2);
+    }
+    .slash-item-cmd {
+      color: #05d9e8;
+      font-weight: 600;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .slash-item-desc {
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 12px;
+    }
+
+    .btn-send-chat {
+      background: linear-gradient(135deg, #ff2a6d, #05d9e8);
+      border: none;
+      color: #ffffff;
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+      box-shadow: 0 2px 8px rgba(5, 217, 232, 0.3);
+    }
+
+    .btn-send-chat:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(5, 217, 232, 0.5);
+    }
+
+    .btn-send-chat:active {
+      transform: translateY(0);
+      box-shadow: 0 1px 4px rgba(5, 217, 232, 0.4);
+    }
+
+    .btn-send-chat.is-cancel {
+      background: #d64545;
+      box-shadow: 0 2px 8px rgba(214, 69, 69, 0.35);
+    }
+
+    .btn-send-chat.is-cancel:hover {
+      box-shadow: 0 4px 12px rgba(214, 69, 69, 0.55);
+    }
+
+    .btn-send-chat:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    #terminal {
+      width: 100%;
+      height: 100%;
+      opacity: 1 !important;
+      pointer-events: auto;
+    }
+
+    .xterm {
+      height: 100%;
+      user-select: text;
+      opacity: 1 !important;
+      pointer-events: auto;
+      cursor: default;
+    }
+
+    .xterm .xterm-cursor-layer {
+      display: none;
+    }
+
+    .xterm textarea {
+      pointer-events: none !important;
+    }
+
+    .xterm-viewport {
+      background-color: transparent !important;
+    }
+
+    .xterm-screen {
+      opacity: 1 !important;
+    }
+
+    .xterm-rows {
+      opacity: 1 !important;
+      font-weight: 600;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95), 0 0 1px rgba(0, 0, 0, 1);
+    }
+
+    /* Terminal Pet */
+    .terminal-pet {
+      position: absolute;
+      bottom: 2px;
+      left: 0;
+      width: 36px;
+      height: 27px;
+      z-index: 5;
+      cursor: pointer;
+      user-select: none;
+      transform-origin: bottom center;
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.8));
+    }
+
+    .terminal-pet:hover {
+      filter: drop-shadow(0 0 6px rgba(5, 217, 232, 0.9));
+    }
+
+    .pet-sprite {
+      width: 100%;
+      height: 100%;
+      image-rendering: pixelated;
+      transform-origin: center center;
+      transition: transform 0.1s ease;
+    }
+
+    .pet-bubble {
+      position: absolute;
+      top: -28px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(12, 14, 22, 0.96);
+      border: 1px solid #05d9e8;
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #05d9e8;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      box-shadow: 0 2px 10px rgba(5, 217, 232, 0.35);
+      z-index: 10;
+    }
+
+    .pet-bubble::after {
+      content: '';
+      position: absolute;
+      bottom: -5px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 5px solid #05d9e8;
+    }
+
+    .pet-bubble.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(-3px);
+    }
+
+    .pet-bubble.active-task {
+      border-color: #ffd166;
+      color: #ffd166;
+      box-shadow: 0 0 12px rgba(255, 209, 102, 0.45);
+      animation: pet-pulse 1.4s infinite alternate;
+    }
+
+    .pet-bubble.active-task::after {
+      border-top-color: #ffd166;
+    }
+
+    .pet-bubble.done-task {
+      border-color: #a3be8c;
+      color: #a3be8c;
+      box-shadow: 0 0 12px rgba(163, 190, 140, 0.45);
+    }
+
+    .pet-bubble.done-task::after {
+      border-top-color: #a3be8c;
+    }
+
+    @keyframes pet-pulse {
+      from { transform: translateX(-50%) translateY(-3px) scale(1); }
+      to { transform: translateX(-50%) translateY(-5px) scale(1.04); }
+    }
+
+    /* Settings Panel */
+    #settings-panel {
+      position: absolute;
+      top: 34px;
+      right: 0;
+      bottom: 0;
+      width: 340px;
+      max-width: 90vw;
+      background: rgba(18, 20, 28, 0.88);
+      backdrop-filter: blur(16px);
+      border-left: 1px solid rgba(255, 255, 255, 0.1);
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      color: #e0e4f0;
+      font-size: 13px;
+    }
+
+    #settings-panel.open {
+      transform: translateX(0);
+    }
+
+    .settings-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .settings-body {
+      padding: 16px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .setting-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .setting-label {
+      font-size: 12px;
+      color: #8b92a5;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .setting-input, .setting-select {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      color: #ffffff;
+      padding: 6px 10px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .setting-input:focus, .setting-select:focus {
+      border-color: #eb6f92;
+    }
+
+    .setting-select option {
+      background: #191b24;
+      color: #ffffff;
+    }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .setting-slider {
+      flex: 1;
+      accent-color: #eb6f92;
+      cursor: pointer;
+    }
+
+    .setting-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #ffffff;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.15s;
+      text-align: center;
+    }
+
+    .setting-btn:hover {
+      background: rgba(255, 255, 255, 0.16);
+    }
+
+    .setting-btn.btn-accent {
+      background: #eb6f92;
+      border-color: #eb6f92;
+      color: #191724;
+      font-weight: 600;
+    }
+
+    .setting-btn.btn-accent:hover {
+      background: #f082a2;
+    }
+
+    .file-status {
+      font-size: 11px;
+      color: #9ccfd8;
+      word-break: break-all;
+      margin-top: 2px;
+    }
+
+    .color-picker {
+      width: 50px;
+      height: 32px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      cursor: pointer;
+      background: transparent;
+    }
+
+    .color-picker::-webkit-color-swatch-wrapper {
+      padding: 0;
+    }
+
+    .color-picker::-webkit-color-swatch {
+      border: none;
+      border-radius: 5px;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Layer 1: Background Media -->
+  <div id="bg-layer">
+    <video id="bg-video" loop muted playsinline></video>
+    <div id="bg-image"></div>
+  </div>
+
+  <!-- Layer 2: Overlay / Dim / Blur -->
+  <div id="overlay-layer"></div>
+
+  <!-- Layer 3: Terminal UI -->
+  <div id="app">
+    <div id="drag-drop-overlay">Lepas file atau foto untuk melampirkan</div>
+    <div id="titlebar">
+      <div class="titlebar-left">
+        <img class="titlebar-icon" src="../../assets/vallenatrix.png" alt="">
+        <span class="titlebar-title">Vallenatrix</span>
+        <button id="btn-new-terminal" class="titlebar-new-terminal" type="button" title="Buka terminal baru (Ctrl+M)">＋ New Terminal</button>
+        <div id="terminal-tabs" role="tablist" aria-label="Terminal Vallenatrix"></div>
+      </div>
+      <div class="titlebar-controls">
+        <button id="btn-settings" class="btn-icon" title="Pengaturan (Ctrl+,)">⚙</button>
+        <button id="btn-minimize" class="btn-icon" title="Minimize">−</button>
+        <button id="btn-maximize" class="btn-icon" title="Maximize">□</button>
+        <button id="btn-close" class="btn-icon btn-close" title="Close">✕</button>
+      </div>
+    </div>
+    <div id="terminal-container">
+      <div id="terminal"></div>
+    </div>
+    <div id="status-bar">
+      <div class="status-left">
+        <span class="status-symbol" title="Hermes Agent Active">☤</span>
+        <select id="model-select" class="model-select-compact">
+          <option value="ag/gemini-3.8-flash-medium">gemini-3.8-flash</option>
+          <option value="kr/claude-sonnet-4.5-thinking-agentic">claude-sonnet-4.5-think</option>
+          <option value="gpt-4o">gpt-4o</option>
+          <option value="claude-3.5-sonnet">claude-sonnet-3.5</option>
+          <option value="gemini-pro">gemini-pro</option>
+          <option value="local">local</option>
+        </select>
+        <button id="btn-delete-model" class="model-list-action" type="button" title="Hapus model terpilih dari daftar" aria-label="Hapus model terpilih">×</button>
+        <button id="btn-restore-models" class="model-list-action" type="button" title="Pulihkan model yang dihapus" aria-label="Pulihkan model" hidden>↺</button>
+        <span class="status-divider">│</span>
+        <span id="status-context" class="status-metric" title="Context Tokens">~0K/1M</span>
+        <span class="status-divider">│</span>
+        <span id="status-bar-visual" class="status-metric" style="color: #4caf50;">[░░░░░░░░░░] 0%</span>
+        <span class="status-divider">│</span>
+        <span id="status-telemetry" class="status-metric">◷ 0.0s │ ↑ 0 t/s</span>
+        <span class="status-divider">│</span>
+        <span class="status-folder" id="status-folder" title="Working Directory">~</span>
+      </div>
+      <div class="status-right">
+        <span class="status-progress" id="status-progress">Ready</span>
+      </div>
+    </div>
+    <div id="chat-input-area">
+      <div id="slash-autocomplete" class="slash-autocomplete hidden"></div>
+      <div id="agent-terminal-panel" aria-label="Live terminal agent">
+        <div id="agent-terminal-panel-header">
+          <strong>Agent terminal</strong>
+          <span id="agent-terminal-command"></span>
+          <button id="agent-terminal-back" class="agent-terminal-action" type="button" title="Kembali ke chat (Ctrl+T lalu B)">Kembali</button>
+          <button id="agent-terminal-stop" class="agent-terminal-action" type="button" title="Hentikan proses agent (Ctrl+T lalu C)">Stop</button>
+          <button id="agent-terminal-new" class="agent-terminal-action" type="button" title="Buka terminal baru (Ctrl+M)">＋</button>
+        </div>
+        <pre id="agent-terminal-output"></pre>
+        <div id="agent-terminal-shortcuts">Ctrl+T lalu C: stop · B: kembali ke chat · Ctrl+M: terminal baru</div>
+      </div>
+      <div id="agent-terminal-notice" class="hidden">
+        <span id="agent-terminal-notice-text"></span>
+        <button id="agent-terminal-show" class="terminal-notice-button" type="button">Lihat output</button>
+        <button id="agent-terminal-notice-stop" class="terminal-notice-button" type="button">Stop</button>
+      </div>
+      <div id="chat-attachments" aria-label="File terlampir"></div>
+      <div class="chat-input-wrapper">
+        <textarea id="chat-input" class="chat-input" rows="1" aria-label="Pesan untuk AI" placeholder="Tanya AI, Shift+Enter untuk baris baru, atau lepas file/foto..." autocomplete="off" spellcheck="false"></textarea>
+        <button id="btn-send-chat" class="btn-send-chat" title="Kirim (Enter)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Layer 4: Settings Panel -->
+  <div id="settings-panel">
+    <div class="settings-header">
+      <span>Pengaturan Vallenatrix</span>
+      <button id="btn-settings-close" class="btn-icon">✕</button>
+    </div>
+    <div class="settings-body">
+      <!-- Theme Selection -->
+      <div class="setting-group">
+        <label class="setting-label">Tema Warna</label>
+        <select id="setting-theme" class="setting-select"></select>
+      </div>
+
+      <!-- Background Type -->
+      <div class="setting-group">
+        <label class="setting-label">Tipe Background</label>
+        <select id="setting-bg-type" class="setting-select">
+          <option value="none">Transparan Polos (Desktop)</option>
+          <option value="image">Gambar / GIF</option>
+          <option value="video">Video (.mp4 / .webm)</option>
+        </select>
+      </div>
+
+      <!-- File Chooser -->
+      <div id="setting-file-container" class="setting-group" style="display: none;">
+        <label class="setting-label">File Media</label>
+        <div class="setting-row">
+          <button id="btn-choose-file" class="setting-btn btn-accent" style="flex: 1;">Pilih File Media...</button>
+          <button id="btn-clear-file" class="setting-btn">Hapus</button>
+        </div>
+        <div id="file-path-display" class="file-status">Belum ada file dipilih</div>
+      </div>
+
+      <!-- Fit Mode -->
+      <div id="setting-fit-container" class="setting-group" style="display: none;">
+        <label class="setting-label">Posisi / Fit Media</label>
+        <select id="setting-bg-fit" class="setting-select">
+          <option value="cover">Cover (Penuh)</option>
+          <option value="contain">Contain (Muat)</option>
+          <option value="fill">Fill (Regang)</option>
+        </select>
+      </div>
+
+      <!-- Dim Level -->
+      <div class="setting-group">
+        <div class="setting-label">
+          <span>Dim Gelap (Teks Terbaca)</span>
+          <span id="label-dim-val">30%</span>
+        </div>
+        <input id="setting-dim" type="range" min="0" max="100" value="30" class="setting-slider">
+      </div>
+
+      <!-- Media Opacity -->
+      <div id="setting-opacity-container" class="setting-group" style="display: none;">
+        <div class="setting-label">
+          <span>Transparansi Media</span>
+          <span id="label-media-opacity-val">80%</span>
+        </div>
+        <input id="setting-media-opacity" type="range" min="10" max="100" value="80" class="setting-slider">
+      </div>
+
+      <!-- Window Opacity -->
+      <div class="setting-group">
+        <div class="setting-label">
+          <span>Opasitas Window</span>
+          <span id="label-win-opacity-val">95%</span>
+        </div>
+        <input id="setting-win-opacity" type="range" min="10" max="100" value="95" class="setting-slider">
+      </div>
+
+      <!-- Blur Level -->
+      <div class="setting-group">
+        <div class="setting-label">
+          <span>Background Blur</span>
+          <span id="label-blur-val">0px</span>
+        </div>
+        <input id="setting-blur" type="range" min="0" max="25" value="0" class="setting-slider">
+      </div>
+
+      <!-- Video Auto Pause -->
+      <div id="setting-autopause-container" class="setting-group" style="display: none;">
+        <label class="setting-label" style="cursor: pointer;">
+          <span>Pause Video Saat Window Tidak Fokus</span>
+          <input id="setting-autopause" type="checkbox" checked style="accent-color: #eb6f92;">
+        </label>
+      </div>
+
+      <!-- Pet Toggle -->
+      <div class="setting-group">
+        <label class="setting-label" style="cursor: pointer;">
+          <span>Terminal Pet (Kucing Jalan)</span>
+          <input id="setting-pet-toggle" type="checkbox" checked style="accent-color: #05d9e8;">
+        </label>
+      </div>
+
+      <!-- Pet Scale -->
+      <div id="setting-pet-scale-container" class="setting-group">
+        <div class="setting-label">
+          <span>Ukuran Pet</span>
+          <span id="label-pet-scale-val">100%</span>
+        </div>
+        <input id="setting-pet-scale" type="range" min="40" max="250" value="100" class="setting-slider">
+      </div>
+
+      <!-- Agent Colors (patch diff locked) -->
+      <div class="setting-group">
+        <label class="setting-label">Warna Agent</label>
+        <div style="font-size: 11px; color: #6e6a86; margin-bottom: 8px;">
+          Patch diff merah/hijau tidak bisa diubah (standar git)
+        </div>
+        
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label style="flex: 1; font-size: 12px; color: #e0def4;">Tool Preparing</label>
+            <input id="setting-color-tool-preparing" type="color" value="#9ccfd8" class="color-picker">
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label style="flex: 1; font-size: 12px; color: #e0def4;">Tool Success</label>
+            <input id="setting-color-tool-success" type="color" value="#a3be8c" class="color-picker">
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label style="flex: 1; font-size: 12px; color: #e0def4;">Agent Response</label>
+            <input id="setting-color-agent-response" type="color" value="#e0def4" class="color-picker">
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label style="flex: 1; font-size: 12px; color: #e0def4;">Error Text</label>
+            <input id="setting-color-error" type="color" value="#eb6f92" class="color-picker">
+          </div>
+        </div>
+      </div>
+
+      <!-- Font Size -->
+      <div class="setting-group">
+        <div class="setting-label">
+          <span>Ukuran Font</span>
+          <span id="label-font-size-val">14px</span>
+        </div>
+        <div class="setting-row">
+          <button id="btn-font-dec" class="setting-btn" style="flex: 1;">A- (Ctrl+-)</button>
+          <button id="btn-font-reset" class="setting-btn">Reset</button>
+          <button id="btn-font-inc" class="setting-btn" style="flex: 1;">A+ (Ctrl+=)</button>
+        </div>
+      </div>
+
+      <!-- Save Settings -->
+      <div class="setting-group" style="margin-top: 20px;">
+        <button id="btn-save-settings" class="setting-btn btn-accent" style="width: 100%;">
+          💾 Simpan Semua Pengaturan
+        </button>
+        <div id="save-notification" style="display: none; margin-top: 8px; padding: 8px; background: rgba(163, 190, 140, 0.2); border: 1px solid #a3be8c; border-radius: 6px; color: #a3be8c; font-size: 12px; text-align: center;">
+          ✓ Pengaturan tersimpan!
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

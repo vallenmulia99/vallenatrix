@@ -1,0 +1,46 @@
+node_modules/
+dist/
+out/
+*.log
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+vallenterminal/dist/
+vallenterminal/out/
+vallenterminal/.vite/
+
+# IDE
+.vscode/
+.idea/
+
+# Local config & credentials
+*.local
+*.env
+*.token
+.vallenatrix/config.json
+.vallenatrix/memories/
+.vallenatrix/sessions/
+.vallenatrix/gateway/
+.vallenatrix/**/session/
+*.session
+refrensi*/
+update.bat
+update.sh
+
+# Local app (separate product, own repo)
+vallenprd/
+vallenprd/node_modules/
+vallenprd/dist/
+
+# Skills hub cache (regenerated on demand)
+.vallenatrix/skills/index-cache/
+
+# Temp
+.cache/
+tmp/
+*.bak
+*.orig.*
+*.corrupt-*
+
+.vallenatrix/escaped/

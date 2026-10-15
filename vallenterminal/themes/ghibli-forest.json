@@ -1,0 +1,31 @@
+{
+  "name": "ghibli-forest",
+  "displayName": "Ghibli Forest",
+  "colors": {
+    "black": "#1c2321",
+    "red": "#d16666",
+    "green": "#7ba05b",
+    "yellow": "#d4a373",
+    "blue": "#5e81ac",
+    "magenta": "#b48ead",
+    "cyan": "#88c0d0",
+    "white": "#e5e9f0",
+    "brightBlack": "#3b4252",
+    "brightRed": "#bf616a",
+    "brightGreen": "#a3be8c",
+    "brightYellow": "#ebcb8b",
+    "brightBlue": "#81a1c1",
+    "brightMagenta": "#b48ead",
+    "brightCyan": "#8fbcbb",
+    "brightWhite": "#eceff4",
+    "foreground": "#e9edc9",
+    "background": "#1b2621",
+    "cursor": "#d4a373",
+    "cursorAccent": "#1b2621",
+    "selectionBackground": "#344e41"
+  },
+  "backgroundPreset": {
+    "dim": 0.35,
+    "opacity": 0.85
+  }
+}

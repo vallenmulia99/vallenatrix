@@ -1,0 +1,24 @@
+{
+  "name": "vallenatrix",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Terminal transparan + background anime",
+  "workspaces": [
+    "vallenterminal",
+    "vallenagent"
+  ],
+  "scripts": {
+    "dev": "npm -w vallenagent run build && npm -w vallenterminal run dev",
+    "build": "npm -w vallenagent run build && npm -w vallenterminal run build",
+    "typecheck": "npm -w vallenagent run typecheck && npm -w vallenterminal run typecheck",
+    "rebuild:pty": "node -e \"const p=require.resolve('node-pty/package.json'); process.chdir(require('path').dirname(p))\" && npx --yes node-gyp@10 rebuild --target=$(node -p \"require('electron/package.json').version\") --arch=$(node -p \"process.arch\") --dist-url=https://electronjs.org/headers",
+    "start": "npm -w vallenagent run build && npm -w vallenterminal run start",
+    "test": "npm -w vallenagent run test && npm -w vallenterminal run test"
+  },
+  "keywords": [
+    "terminal",
+    "electron"
+  ],
+  "author": "vallenganteng",
+  "license": "MIT"
+}

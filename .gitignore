@@ -16,6 +16,7 @@ vallenterminal/.vite/
 
 # Local config & credentials
 *.local
+.env
 *.env
 *.token
 .vallenatrix/config.json
@@ -27,6 +28,12 @@ vallenterminal/.vite/
 refrensi*/
 update.bat
 update.sh
+
+# Dev/build reports local (nothing to publish)
+FIX_REPORT.md
+FIX_REPORT.md.local-*
+bugs/
+*.report.md
 
 # Local app (separate product, own repo)
 vallenprd/

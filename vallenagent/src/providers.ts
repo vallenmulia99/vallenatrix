@@ -1,6 +1,8 @@
 // Model provider adapters - OpenAI compatible interface
 
 export interface Message {
+  /** Provider cache marker (Anthropic-style). Only set on the stable prompt prefix. */
+  cache_control?: { type: 'ephemeral' }
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
   tool_calls?: ToolCall[]

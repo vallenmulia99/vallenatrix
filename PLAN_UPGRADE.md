@@ -60,13 +60,13 @@ Backup config lama: `~/.vallenatrix/config.json.bak-*`
 |---|---|---|---|
 | context compressor | 6 file / 6.273 b | 1 fungsi | konteks hilang di kerja panjang |
 | varian compaction | 6 file / 1.908 b | — | tidak ada kompaksi adaptif |
-| turn recovery | 3 file / 2.130 b | TIDAK ADA | turn gagal = kerja hilang |
+| turn recovery | 3 file / 2.130 b | **1 file / 160 b (baru)** | checkpoint progres + prompt resume |
 | retry/fallback | 6 file / 524 b | 1 file / 291 b | provider goyang = berhenti |
 | verification | 3 file / 1.053 b | **1 file / 168 b (baru)** | agent bisa mengaku selesai tanpa bukti |
-| prompt build + cache | 5 file / 3.420 b | TIDAK ADA | tiap iterasi bayar penuh |
+| prompt build + cache | 5 file / 3.420 b | **1 file / 90 b (baru)** | prefix stabil di-cache bila provider dukung |
 | approval/secret | 10 file / 4.871 b | 1 file / 110 b | permukaan risiko lebih luas |
 | delegation | 9 file / 4.424 b | 1 file / 1.095 b | tak ada background/`output_schema` |
-| session search | 1 file / 800 b | TIDAK ADA | tidak bisa mengingat kerja lama |
+| session search | 1 file / 800 b | **1 file / 120 b (baru)** | cari sesi lama by keyword |
 | cron | 43 file / 18.955 b | TIDAK ADA | tidak ada kerja terjadwal |
 | LSP | 11 file / 3.392 b | TIDAK ADA | tidak ada diagnosa tipe |
 | memory | 2 file / 1.205 b | 1 file / 286 b | memori dangkal |
@@ -93,25 +93,41 @@ Backup config lama: `~/.vallenatrix/config.json.bak-*`
   mendorong agent sekali kalau ada file berubah tapi belum ada bukti.
   6 test baru di `tests/verification_ledger.test.mjs`.
 - **Referensi** `hermes-agent-main/` di-`.gitignore` (261 MB, jangan pernah naik ke remote).
+- **P1-4** **Kompaksi berjenjang dengan model** (`src/compaction.ts`, `src/summarizer.ts`):
+  ringkasan lama diringkas ulang oleh model (temperature 0, prompt faktual), dengan
+  fallback otomatis ke ringkasan lokal kalau model gagal/kosong. Bisa dimatikan lewat
+  `gateway.llm_compaction: false`. 7 test di `tests/compaction_summarizer.test.mjs`.
+- **P1-5** **Turn recovery minimal** (`src/turn_recovery.ts`): checkpoint progres
+  ditulis saat turn gagal di tengah + `agent.resumePrompt()` untuk melanjutkan tanpa
+  mengulang langkah yang sudah selesai. 7 test di `tests/turn_recovery.test.mjs`.
+- **P2-6** **Prompt caching** (`src/prompt_cache.ts`): prefix stabil (system prompt)
+  ditandai `cache_control` untuk provider yang mendukung; kalau gateway menolak
+  (400/invalid field) otomatis retry tanpa marker dan mematikannya.
+  5 test di `tests/prompt_cache.test.mjs`. Kill switch: `VALLENATRIX_PROMPT_CACHE=off`.
+- **P2-7** **Index skill diringkas**: deskripsi dipotong (60 char) dan kategori
+  `general` dikompakkan jadi daftar nama. 8.389 → 4.466 char (−47%).
+  3 test di `tests/skills_index_compaction.test.mjs`.
+- **P2-8** **Session search** (`src/session_search.ts` + tool `session_search`):
+  cari pekerjaan lama dari sesi tersimpan, urut berdasar bobot kecocokan.
+  4 test di `tests/session_search.test.mjs`.
 
 ### Belum (urutan usulan)
 
-4. **Kompaksi berjenjang dengan LLM** — ringkas blok lama pakai model murah
-   (auxiliary) alih-alih `buildSummaryLines`; simpan ringkasan ke disk agar bisa
-   di-recall. Ini perbaikan terbesar yang tersisa.
-5. **Turn recovery minimal** — simpan progres saat provider error di tengah turn,
-   auto-retry sekali dengan konteks terkompaksi, jangan matikan turn.
-6. **Prompt caching** — tandai prefix stabil (system + tools + skill index)
-   sebagai cacheable bila provider mendukung `cache_control`.
-7. **Ringkas index skill di prompt** — profil user datar (58 skill tanpa
-   kategori); pertimbangkan index ringkas (nama + 1 frasa) untuk menekan ~2k token.
-8. **Session search** — index sesi lama + tool `session_search`.
-9. **LSP** — diagnosa tipe setelah patch supaya agent tahu kesalahannya sendiri.
-10. **Opsional**: cron/scheduler, delegation background + `output_schema`, kanban.
+9. **LSP** — diagnosa tipe setelah patch supaya agent tahu kesalahannya sendiri
+   (butuh language server + protokol; pekerjaan terbesar yang tersisa).
+10. **Ringkasan lintas-sesi berkelanjutan** — saat ini ringkasan model hanya hidup
+    di dalam history aktif; menyimpannya ke disk akan membuat agent bisa recall
+    keputusan lama tanpa memuat ulang seluruh sesi.
+11. **Opsional**: cron/scheduler, delegation background + `output_schema`, kanban,
+    model auxiliary khusus untuk ringkasan (`auxiliary.provider`).
 
 ## Verifikasi
 
-- `npm -w vallenagent test` → 198/198 pass.
+- `npm -w vallenagent test` → 224/224 pass (naik dari 198; +26 test untuk subsistem baru).
 - `npm -w vallenterminal test` → 25/25 pass.
 - `npm run typecheck` → agent + terminal bersih.
-- `node tools/measure_prompt_cost.mjs` → jalan, angka di atas.
+- `npm run build` → agent + terminal bersih.
+- `node tools/measure_prompt_cost.mjs` → 20 tool, schema 11.500 char, index skill
+  4.466 char, total tetap ~4.100 token per iterasi (turun dari ~4.973).
+- Smoke test nyata: `AIAgent` baru + `resumePrompt()` setelah checkpoint +
+  `VerificationLedger` mencatat hasil `npm test`.

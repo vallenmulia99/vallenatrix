@@ -37,6 +37,11 @@ Autonomous AI Agent runtime implemented in TypeScript, following Hermes Agent ar
 - `tools.ts`: `ToolRegistry` managing schemas and executing handlers.
 - `providers.ts`: `OpenAICompatibleProvider` for 9router (`http://127.0.0.1:20128/v1`).
 - `config.ts`: Loads and persists settings to `.vallenatrix/config.json`.
+- `verification.ts`: Records real verification evidence (test/build/lint with exit code and result summary) per session, injects a compact evidence block into the request, and nudges once when files changed without any verification run.
+- `turn_recovery.ts`: Writes a turn checkpoint when a long turn dies mid-way and builds the resume prompt; `AIAgent.resumePrompt()` exposes it. Checkpoints live next to the session files, mode 0600.
+- `compaction.ts` + `summarizer.ts`: Model-backed history compaction (temperature 0, factual handover prompt) with automatic fallback to the rule-based `compactHistory`. Disable with `gateway.llm_compaction: false`.
+- `prompt_cache.ts`: Marks the stable prompt prefix with `cache_control` for cache-capable providers; on a 400/invalid-field rejection it retries without markers and switches itself off. Kill switch `VALLENATRIX_PROMPT_CACHE=off`.
+- `session_search.ts`: Keyword search over saved sessions, exposed as the `session_search` tool (toolset `memory`).
 - `approval.ts`: Single approval policy shared by every surface. `requiresApproval(info, mode)` returns whether a tool call must be confirmed; `approvalMode()` resolves `VALLENATRIX_APPROVAL` env override, then the surface config, then defaults to `dangerous`. Destructive shell (`rm -rf`, `dd`, `mkfs`, force-push, remote uploads), `execute_code`, `browser_exec`, mutating `skill_manage`, and any path inside `.ssh`/`.aws`/`.gnupg`/`.config`/`.kube`/`.docker`/`.vallenatrix`/`/etc`/`/usr`/`/boot`/`/root` are gated; ordinary project commands are not. `dangerous` gates risky ops, `all` gates every call, `off` disables.
 
 ## Interactive approval flow

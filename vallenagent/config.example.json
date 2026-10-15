@@ -33,7 +33,9 @@
     "qwen2.5-coder-32b-instruct": 32000,
     "llama-3.1-70b-instruct": 128000
   },
+  "_catatan2": "gateway.llm_compaction: true (default) = kompaksi memakai satu panggilan model untuk ringkasan lebih kaya; false = ringkasan lokal saja.",
   "gateway": {
+    "llm_compaction": true,
     "background_review": false,
     "background_review_interval": 5,
     "telegram": {

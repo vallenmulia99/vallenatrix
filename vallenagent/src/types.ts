@@ -31,6 +31,8 @@ export interface AgentConfig {
   }
   gateway?: {
     background_review?: boolean
+    /** true (default) = compaction boleh memakai satu panggilan model untuk ringkasan yang lebih kaya. */
+    llm_compaction?: boolean
     background_review_interval?: number
     telegram?: {
       approval?: 'dangerous' | 'all' | 'off'

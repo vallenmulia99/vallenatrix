@@ -13,6 +13,7 @@ import { registry, ToolContext, ToolSchema } from './tools'
 import { SkillLoader } from './skills'
 import { MemoryStore } from './memory'
 import { TodoStore } from './todo'
+import { searchSessions, formatHits } from './session_search'
 
 function expandIpv6(ip: string): string[] {
   const parts = ip.split('::')
@@ -1012,6 +1013,38 @@ export function registerBuiltinTools(
         matches: paged,
         total_count: contentMatches.length,
         truncated: contentMatches.length > offset + limit
+      })
+    }
+  })
+
+  // 4b. session_search — recall past work from saved sessions
+  const sessionSearchSchema: ToolSchema = {
+    name: 'session_search',
+    description: 'Search saved past sessions for earlier work, decisions, or commands. Returns matching sessions with snippets.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Keywords to search for (topic, file, command)' },
+        limit: { type: 'integer', description: 'Maximum number of sessions to return (default 10)' }
+      },
+      required: ['query']
+    }
+  }
+
+  registry.register({
+    name: 'session_search',
+    schema: sessionSearchSchema,
+    toolset: 'memory',
+    handler: async (args) => {
+      const query = String(args.query || '').trim()
+      if (!query) return JSON.stringify({ error: 'query is required' })
+      const limit = Number(args.limit) || 10
+      const hits = searchSessions(query, { limit })
+      return JSON.stringify({
+        query,
+        matches: hits.length,
+        results: hits.map(hit => ({ session: hit.sessionId, score: hit.score, terms: hit.matchedTerms, snippet: hit.snippet })),
+        formatted: formatHits(hits)
       })
     }
   })

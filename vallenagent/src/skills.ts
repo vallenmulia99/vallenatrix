@@ -260,7 +260,13 @@ export class SkillLoader {
       .map(item => item.skill)
   }
 
-  getFormattedIndex(): string {
+  /**
+   * Index skill untuk system prompt. Diringkas supaya biaya per-request tetap kecil:
+   * deskripsi dipotong (penuh ada di SKILL.md, dibaca saat skill_view), dan kategori
+   * bawaan 'general' dikompakkan jadi daftar nama saja.
+   */
+  getFormattedIndex(options: { descriptionChars?: number } = {}): string {
+    const descriptionChars = Math.max(0, Math.min(options.descriptionChars ?? 60, 200))
     const byCategory = new Map<string, Skill[]>()
     for (const skill of this.skills.values()) {
       const cat = skill.metadata.category || 'general'
@@ -268,13 +274,25 @@ export class SkillLoader {
       byCategory.get(cat)!.push(skill)
     }
 
+    const truncate = (text: string) => {
+      const value = String(text || '').replace(/\s+/g, ' ').trim()
+      if (descriptionChars === 0) return ''
+      return value.length > descriptionChars ? `${value.slice(0, descriptionChars - 1)}…` : value
+    }
+
     const lines: string[] = []
     const sortedCats = Array.from(byCategory.keys()).sort()
     for (const cat of sortedCats) {
-      lines.push(`  ${cat}:`)
       const catSkills = byCategory.get(cat)!.sort((a, b) => a.name.localeCompare(b.name))
+      // Kategori bawaan tanpa kurasi: cuma nama, biar tidak ada 60 deskripsi panjang.
+      if (cat === 'general') {
+        lines.push(`  general (${catSkills.length}): ${catSkills.map(s => s.name).join(', ')}`)
+        continue
+      }
+      lines.push(`  ${cat}:`)
       for (const s of catSkills) {
-        lines.push(`    - ${s.name}: ${s.metadata.description}`)
+        const desc = truncate(s.metadata.description)
+        lines.push(desc ? `    - ${s.name}: ${desc}` : `    - ${s.name}`)
       }
     }
 

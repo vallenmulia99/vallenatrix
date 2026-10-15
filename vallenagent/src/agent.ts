@@ -12,6 +12,9 @@ import { SkillLoader } from './skills'
 import { syncBundledSkills, readManifest } from './skills_sync'
 import { MemoryStore } from './memory'
 import { TodoStore } from './todo'
+import { createSummarizer, summarizeWithProvider } from './summarizer'
+import { markCachePrefix, supportsPromptCache, stripCacheMarkers } from './prompt_cache'
+import { buildCheckpoint, buildResumePrompt, defaultCheckpointDir, isCheckpointRelevant, loadCheckpoint, progressFromHistory, saveCheckpoint } from './turn_recovery'
 import { VerificationLedger } from './verification'
 import { SessionManager } from './session'
 import { loadConfig, getActiveProvider, setProviderToken, saveConfig } from './config'
@@ -300,6 +303,9 @@ export class AIAgent {
   private chatActive = false
   private abortController: AbortController | null = null
   private fileReadCoverage = new Map<string, FileReadCoverage>()
+  private summarizer: ReturnType<typeof createSummarizer> | null = null
+  private promptCacheEnabled = false
+  private checkpointDir: string
   private verification: VerificationLedger
   private verificationBaselineChanged = false
 
@@ -315,7 +321,8 @@ export class AIAgent {
     this.sessionId = options.sessionId || `session-${Date.now()}`
     this.backgroundReview = options.backgroundReview ?? (this.config.gateway?.background_review ?? true)
     this.sessionManager = new SessionManager(options.sessionDir)
-    this.verification = new VerificationLedger(this.sessionId, options.sessionDir)
+    this.checkpointDir = defaultCheckpointDir(options.sessionDir)
+    this.verification = new VerificationLedger(this.sessionId, this.checkpointDir)
 
     // Initialize provider
     const activeProvider = getActiveProvider(this.config)
@@ -325,6 +332,13 @@ export class AIAgent {
       activeProvider.api_key,
       activeProvider.model
     )
+
+    this.promptCacheEnabled = supportsPromptCache(activeProvider.model, activeProvider.base_url)
+
+    // Model-backed compaction is opt-in: one extra cheap call per compaction.
+    if (!this.isSubagent && this.config.gateway?.llm_compaction !== false) {
+      this.summarizer = createSummarizer({ provider: this.provider, maxOutputTokens: 2000 })
+    }
 
     // Initialize skill loader
     const skillPaths = this.config.skills?.paths || []
@@ -554,7 +568,8 @@ export class AIAgent {
       const summaryCap = Math.max(2_000, Math.min(MAX_SUMMARY_CHARS, Math.floor(contextWindow * 0.6)))
       const tokenPressure = estimateRequestTokens(this.conversationHistory, tools) > compactLimit
       if (this.conversationHistory.length > MAX_HISTORY_MESSAGES || tokenPressure) {
-        compactHistory(this.conversationHistory, 8, currentUserIndex, tokenPressure, summaryCap)
+        const improved = await this.compactWithModel(currentUserIndex, tokenPressure, summaryCap)
+        if (!improved) compactHistory(this.conversationHistory, 8, currentUserIndex, tokenPressure, summaryCap)
       }
       // Still heavy: older steps of the active turn get summarized too (long single-turn jobs).
       if (tokenPressure) {
@@ -626,9 +641,13 @@ export class AIAgent {
       const onProviderChunk = callbacks?.onChunk
         ? (chunk: string) => { if (!requestHasOpenTasks) safeCallback(callbacks.onChunk, chunk) }
         : undefined
-      const response = await this.provider.chat({
+      // Mark the stable prefix (system prompt) so cache-capable providers reuse it.
+      const requestMessages = this.promptCacheEnabled
+        ? markCachePrefix(messages, { prefixMessages: 1, model: turnModel })
+        : messages
+      const callProvider = (payload: Message[]) => this.provider.chat({
         model: turnModel,
-        messages,
+        messages: payload,
         tools: tools.length > 0 ? tools : undefined,
         max_tokens: outputTokenAllowance,
         temperature: this.config.temperature,
@@ -636,6 +655,18 @@ export class AIAgent {
         stream: Boolean(callbacks?.onChunk),
         onChunk: onProviderChunk
       })
+      let response
+      try {
+        response = await callProvider(requestMessages)
+      } catch (error: any) {
+        // Not every gateway accepts cache_control: retry once without markers, then stop marking.
+        const failure = String(error?.message || '')
+        const rejectedCache = this.promptCacheEnabled && requestMessages !== messages && /(^|\D)400(\D|$)|invalid|unknown field|unsupported/i.test(failure)
+        if (!rejectedCache) throw error
+        logger.warn('[Agent] Provider rejected cache_control; retrying without prompt cache markers.')
+        this.promptCacheEnabled = false
+        response = await callProvider(stripCacheMarkers(requestMessages))
+      }
 
       const choice = response.choices[0]
       const assistantMessage = choice.message
@@ -847,7 +878,24 @@ export class AIAgent {
     
     // Save session even on interrupt, including active task checklist.
     try { this.saveCurrentSession() } catch {}
-    
+
+    // Checkpoint so a long turn that died mid-way can be resumed instead of redone.
+    if (!this.isSubagent) {
+      try {
+        saveCheckpoint(this.checkpointDir, buildCheckpoint({
+          sessionId: this.sessionId,
+          iterations,
+          toolCalls: toolCallCount,
+          userRequest: trimmedUserMsg,
+          filesTouched: this.todoStore.read().flatMap(todo => todo.content.match(/[\w./-]+\.[a-z]{1,5}/g) || []),
+          progress: progressFromHistory(this.conversationHistory),
+          lastError: err?.message ? String(err.message) : String(err)
+        }))
+      } catch {
+        // Checkpoint is best-effort.
+      }
+    }
+
     throw err
   }
 }
@@ -953,6 +1001,38 @@ export class AIAgent {
       preview: formatToolEnd(toolName, toolArgs, result, durationSec)
     })
     return result
+  }
+
+  /** Ringkas history dengan model; false = pakai fallback lokal. */
+  private async compactWithModel(preserveIndex: number, force: boolean, maxChars: number): Promise<boolean> {
+    if (this.isSubagent || !this.summarizer) return false
+    const startIndex = 1 // system prompt stays at index 0
+    let endIndex = force && preserveIndex >= 0
+      ? preserveIndex
+      : Math.min(this.conversationHistory.length - 8, preserveIndex < 0 ? this.conversationHistory.length : preserveIndex)
+    while (endIndex > startIndex && this.conversationHistory[endIndex]?.role === 'tool') endIndex--
+    if (endIndex <= startIndex) return false
+    const oldTurns = this.conversationHistory.slice(startIndex, endIndex)
+    if (oldTurns.length < 4) return false
+
+    const material = buildSummaryLines(oldTurns, [], maxChars * 3).join('\n')
+    const summary = await summarizeWithProvider(this.summarizer, material, maxChars, this.abortController?.signal)
+    if (!summary) return false
+
+    const compactedMessage: Message = {
+      role: 'user',
+      content: `${SUMMARY_HEADER} (${oldTurns.length} messages compacted by model):\n${summary}\n${SUMMARY_FOOTER}`
+    }
+    const ackMessage: Message = { role: 'assistant', content: 'Summary noted. Continuing.' }
+    this.conversationHistory.splice(startIndex, endIndex - startIndex, compactedMessage, ackMessage)
+    return true
+  }
+
+  /** Prompt lanjutan untuk turn yang gagal di tengah; null kalau tidak ada. */
+  resumePrompt(): string | null {
+    const checkpoint = loadCheckpoint(this.checkpointDir, this.sessionId)
+    if (!isCheckpointRelevant(checkpoint)) return null
+    return buildResumePrompt(checkpoint!)
   }
 
   private buildSystemPrompt(): string {

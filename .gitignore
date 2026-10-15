@@ -40,6 +40,9 @@ vallenprd/
 vallenprd/node_modules/
 vallenprd/dist/
 
+# Hermes reference checkout (read-only study copy, never published)
+hermes-agent-main/
+
 # Skills hub cache (regenerated on demand)
 .vallenatrix/skills/index-cache/
 

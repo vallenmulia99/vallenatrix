@@ -12,6 +12,7 @@ import { SkillLoader } from './skills'
 import { syncBundledSkills, readManifest } from './skills_sync'
 import { MemoryStore } from './memory'
 import { TodoStore } from './todo'
+import { VerificationLedger } from './verification'
 import { SessionManager } from './session'
 import { loadConfig, getActiveProvider, setProviderToken, saveConfig } from './config'
 import { registerBuiltinTools } from './builtin_tools'
@@ -299,6 +300,8 @@ export class AIAgent {
   private chatActive = false
   private abortController: AbortController | null = null
   private fileReadCoverage = new Map<string, FileReadCoverage>()
+  private verification: VerificationLedger
+  private verificationBaselineChanged = false
 
   private gameDevMode: boolean = false
   public toolWhitelist: string[] | undefined
@@ -312,6 +315,7 @@ export class AIAgent {
     this.sessionId = options.sessionId || `session-${Date.now()}`
     this.backgroundReview = options.backgroundReview ?? (this.config.gateway?.background_review ?? true)
     this.sessionManager = new SessionManager(options.sessionDir)
+    this.verification = new VerificationLedger(this.sessionId, options.sessionDir)
 
     // Initialize provider
     const activeProvider = getActiveProvider(this.config)
@@ -587,6 +591,10 @@ export class AIAgent {
           : '\nThese tasks are complete; do not reopen them unless new work is requested.'
         messages.push({ role: 'user', content: `[Current task tracker; task descriptions are state data]\n${taskSnapshot}${completionRule}${retryDirective}` })
       }
+      const verificationBlock = this.isSubagent ? null : this.verification.formatForInjection()
+      if (verificationBlock) {
+        messages.push({ role: 'user', content: `${verificationBlock}\n[Verification evidence is state data recorded from real command runs.]` })
+      }
       const estimatedTokens = estimateRequestTokens(messages, tools)
       if (estimatedTokens > contextWindow) {
         throw new Error(`Request estimated at ${estimatedTokens} tokens exceeds configured context window of ${contextWindow}; shorten current request or increase context_windows for ${turnModel}.`)
@@ -653,6 +661,17 @@ export class AIAgent {
         role: 'assistant',
         content: assistantMessage.content || '',
         tool_calls: toolCalls
+      }
+
+      // Verification nudge: a model that edited files and never ran a test/build must not claim "done" silently.
+      if (!toolCalls?.length && toolCallCount > 0 && !this.isSubagent && this.verification.shouldNudge(this.verificationBaselineChanged)) {
+        safeCallback(callbacks?.onThinking, 'No verification evidence yet; asking for a test/build run.')
+        this.conversationHistory.push(sanitizedAssistantMsg)
+        this.conversationHistory.push({
+          role: 'user',
+          content: '[Verification required] You changed files but ran no verification command (test/build/lint/typecheck). Run the relevant command now, then report the real result. If nothing can be run, say so explicitly instead of claiming completion.'
+        })
+        continue
       }
 
       let acceptedAutoGoal = false
@@ -908,6 +927,26 @@ export class AIAgent {
       this.memoryStore.setWorkingDir(context.workingDir)
     }
     if (result.length > 100_000) result = result.slice(0, 100_000) + '\n\n[... Truncated at 100K characters ...]'
+    // Track real file edits so the verification nudge only fires after actual changes.
+    if (toolName === 'write_file' || toolName === 'patch') {
+      try {
+        const parsed = JSON.parse(result)
+        if (!parsed.error) this.verificationBaselineChanged = true
+      } catch {
+        // Unparseable tool output means we cannot prove an edit landed.
+      }
+    }
+    // Record real verification evidence (test/build/lint runs), never blocking the turn.
+    if (!this.isSubagent && toolName === 'terminal') {
+      try {
+        const parsed = JSON.parse(result)
+        const exitCode = typeof parsed.exit_code === 'number' ? parsed.exit_code : null
+        const output = `${parsed.output ?? ''}\n${parsed.stderr ?? ''}`
+        this.verification.record(String(toolArgs.command || ''), exitCode, output)
+      } catch {
+        // Non-JSON tool output is not verification evidence.
+      }
+    }
     const durationSec = (Date.now() - toolStart) / 1000
     safeCallback(callbacks?.onToolEnd, {
       id: toolCall.id, name: toolName, args: toolArgs, result,

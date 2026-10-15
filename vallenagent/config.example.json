@@ -1,0 +1,50 @@
+{
+  "_catatan": [
+    "Salin file ini jadi config.json di folder ini, lalu sesuaikan nilainya.",
+    "context_windows: map nama-model ke ukuran window (token). WAJIB diisi;",
+    "  tanpa ini agent mengasumsikan 128000 dan kompaksi bisa jalan di ambang salah.",
+    "default_context_window: dipakai untuk model yang tidak ada di map di atas.",
+    "max_output_tokens: cap output per satu request (default 16384).",
+    "max_tokens_per_turn: budget OUTPUT per turn, bukan prompt.",
+    "temperature: 0-0.3 disarankan untuk coding."
+  ],
+  "providers": {
+    "active": "9router",
+    "9router": {
+      "base_url": "http://127.0.0.1:20128/v1",
+      "api_key": "",
+      "model": "ag/gemini-3.8-flash-medium",
+      "enabled": true
+    }
+  },
+  "max_iterations": 500,
+  "max_tokens_per_turn": 200000,
+  "max_output_tokens": 32768,
+  "temperature": 0.2,
+  "default_context_window": 128000,
+  "context_windows": {
+    "ag/gemini-3.8-flash-medium": 200000,
+    "ag/gemini-3.8-flash": 200000,
+    "ag/claude-sonnet-4.5": 200000,
+    "gpt-4o": 128000,
+    "gpt-4o-mini": 128000,
+    "claude-3-5-sonnet": 200000,
+    "deepseek-chat": 64000,
+    "qwen2.5-coder-32b-instruct": 32000,
+    "llama-3.1-70b-instruct": 128000
+  },
+  "gateway": {
+    "background_review": false,
+    "background_review_interval": 5,
+    "telegram": {
+      "approval": "dangerous",
+      "max_iterations": 60,
+      "turn_timeout_ms": 900000
+    }
+  },
+  "skills": {
+    "paths": [],
+    "disabled": [],
+    "enabled": []
+  }
+}

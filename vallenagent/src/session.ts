@@ -65,18 +65,18 @@ export class SessionManager {
     }
   }
 
-  private readLegacyMetadata(filePath: string): { id: string; title: string; updated_at: string; model: string } | null {
+  private readLegacyMetadata(filePath: string): { id: string; title: string; created_at: string; updated_at: string; model: string } | null {
     const fd = openSync(filePath, 'r')
     try {
       const buffer = Buffer.alloc(8192)
       const bytes = readSync(fd, buffer, 0, buffer.length, 0)
       const header = buffer.subarray(0, bytes).toString('utf-8')
       const fields: Record<string, string> = {}
-      for (const match of header.matchAll(/"(id|title|updated_at|model)"\s*:\s*("(?:\\.|[^"\\])*")/g)) {
+      for (const match of header.matchAll(/"(id|title|created_at|updated_at|model)"\s*:\s*("(?:\\.|[^"\\])*")/g)) {
         try { fields[match[1]] = JSON.parse(match[2]) } catch {}
       }
       return fields.id && fields.title ? {
-        id: fields.id, title: fields.title, updated_at: fields.updated_at || '', model: fields.model || 'unknown'
+        id: fields.id, title: fields.title, created_at: fields.created_at || '', updated_at: fields.updated_at || '', model: fields.model || 'unknown'
       } : null
     } finally {
       closeSync(fd)
@@ -159,9 +159,9 @@ export class SessionManager {
     }
   }
 
-  listSessions(): Array<{ id: string; title: string; updated_at: string; model: string }> {
+  listSessions(): Array<{ id: string; title: string; created_at: string; updated_at: string; model: string }> {
     this.ensureDir()
-    const result: Array<{ id: string; title: string; updated_at: string; model: string }> = []
+    const result: Array<{ id: string; title: string; created_at: string; updated_at: string; model: string }> = []
 
     try {
       const files = readdirSync(this.baseDir)
@@ -173,6 +173,7 @@ export class SessionManager {
           result.push({
             id: content.id || file.replace('.meta.json', ''),
             title: content.title || 'Untitled',
+            created_at: content.created_at || '',
             updated_at: content.updated_at || '',
             model: content.model || 'unknown'
           })

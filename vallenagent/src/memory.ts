@@ -15,6 +15,7 @@ export class MemoryStore {
   private static locks = new Map<string, Promise<void>>()
   private baseDir: string
   private projectDir: string
+  private workingDir: string
   private scoped: boolean
   private memoryLimit: number = 2200
   private userLimit: number = 1375
@@ -22,6 +23,7 @@ export class MemoryStore {
   constructor(customDir?: string, workingDir = process.cwd()) {
     this.scoped = !customDir
     this.baseDir = customDir || join(getVallenatrixHome(), 'memories')
+    this.workingDir = resolve(workingDir)
     this.projectDir = customDir || this.getProjectDir(workingDir)
     this.ensureDir()
   }
@@ -33,8 +35,13 @@ export class MemoryStore {
 
   setWorkingDir(workingDir: string): void {
     if (!this.scoped) return
+    this.workingDir = resolve(workingDir)
     this.projectDir = this.getProjectDir(workingDir)
     this.ensureDir()
+  }
+
+  getWorkingDir(): string {
+    return this.workingDir
   }
 
   private ensureDir(): void {

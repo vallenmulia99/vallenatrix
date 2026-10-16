@@ -1265,12 +1265,13 @@ Prefer engine-native solutions over custom implementations. Write tests for game
 
   private spawnBackgroundReview(callbacks?: AgentCallbacks): void {
     const conversationSnapshot = [...this.conversationHistory]
+    const reviewConfig = { ...this.config, terminal: { ...this.config.terminal, cwd: this.memoryStore.getWorkingDir() } }
     
     spawnBackgroundReview(
       conversationSnapshot,
       async (userPrompt: string, systemPrompt: string, toolWhitelist: string[]) => {
         const reviewAgent = new AIAgent({
-          config: this.config,
+          config: reviewConfig,
           maxIterations: 10,
           isSubagent: true,
           lightweight: true,

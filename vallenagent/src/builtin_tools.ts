@@ -15,6 +15,7 @@ import { MemoryStore } from './memory'
 import { TodoStore } from './todo'
 import { searchSessions, formatHits } from './session_search'
 import { manageProcess, startBackgroundProcess } from './process_manager'
+import { captureTypeScriptDiagnostics, newTypeScriptDiagnostics } from './typescript_diagnostics'
 
 function expandIpv6(ip: string): string[] {
   const parts = ip.split('::')
@@ -746,7 +747,7 @@ export function registerBuiltinTools(
   // 2. write_file
   const writeFileSchema: ToolSchema = {
     name: 'write_file',
-    description: "Write content to a file. Creates parent directories. Existing files require a complete prior read_file; use patch for targeted edits.",
+    description: "Write content to a file. Creates parent directories. Existing files require a complete prior read_file; use patch for targeted edits. New TypeScript diagnostics are returned in lsp_diagnostics when a project tsconfig is available.",
     parameters: {
       type: 'object',
       properties: {
@@ -769,6 +770,7 @@ export function registerBuiltinTools(
       }
       const fullPath = isAbsolute(rawPath) ? rawPath : resolve(basePath, rawPath)
       const content = String(args.content ?? '')
+      const diagnosticsBefore = captureTypeScriptDiagnostics(fullPath, basePath)
 
       let destination = fullPath
       let previousContent: string | null = ''
@@ -804,6 +806,7 @@ export function registerBuiltinTools(
         const verified = readFileSync(destination, 'utf-8') === content
         if (!verified) return JSON.stringify({ error: 'Write verification failed' })
         recordWrittenFile(context, destination, content)
+        const lspDiagnostics = newTypeScriptDiagnostics(diagnosticsBefore, captureTypeScriptDiagnostics(fullPath, basePath))
         const fileDiff = previousContent !== null && previousContent !== content
           ? generateUnifiedFileDiff(previousContent, content, relative(basePath, fullPath) || basename(fullPath))
           : undefined
@@ -813,6 +816,7 @@ export function registerBuiltinTools(
           path: fullPath,
           bytes_written: Buffer.byteLength(content, 'utf-8'),
           verified,
+          ...(lspDiagnostics ? { lsp_diagnostics: lspDiagnostics } : {}),
           ...(diffPreview ? { diff: diffPreview.diff } : {}),
           ...(diffPreview?.omittedLines
             ? { diff_truncated: true, diff_omitted_lines: diffPreview.omittedLines }
@@ -863,6 +867,7 @@ export function registerBuiltinTools(
         const bytes = readFileSync(fullPath)
         if (bytes.includes(0)) return JSON.stringify({ error: 'Cannot patch binary file' })
         const content = bytes.toString('utf-8')
+        const diagnosticsBefore = captureTypeScriptDiagnostics(fullPath, basePath)
         const oldString = String(args.old_string ?? '')
         const newString = String(args.new_string ?? '')
         const replaceAll = isTruthy(args.replace_all)
@@ -871,12 +876,14 @@ export function registerBuiltinTools(
         const tempPath = `${fullPath}.tmp-${process.pid}`
         try { writeFileSync(tempPath, result.content, 'utf-8'); renameSync(tempPath, fullPath) } catch (err) { try { unlinkSync(tempPath) } catch {}; throw err }
         recordWrittenFile(context, fullPath, result.content)
+        const lspDiagnostics = newTypeScriptDiagnostics(diagnosticsBefore, captureTypeScriptDiagnostics(fullPath, basePath))
 
         return JSON.stringify({
           success: true,
           path: fullPath,
           strategy: result.strategy,
-          diff: result.diff
+          diff: result.diff,
+          ...(lspDiagnostics ? { lsp_diagnostics: lspDiagnostics } : {})
         })
       } catch (err: any) {
         return JSON.stringify({ error: err.message || 'Failed to patch file' })

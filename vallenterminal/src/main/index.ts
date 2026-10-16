@@ -646,10 +646,15 @@ function setupIpc(): void {
         if (sessions.length === 0) {
           return { response: '\x1b[33mNo saved sessions found in ~/.vallenatrix/sessions/\x1b[0m' }
         }
-        const lines = ['\x1b[36m[Saved Chat Sessions]\x1b[0m']
+        const lines = ['\x1b[36m[Saved Chat Sessions]\x1b[0m', '\x1b[2m[NEW] Created within 24 hours · [OLD] Older · newest activity first\x1b[0m']
         for (const s of sessions.slice(0, 10)) {
-          const dateStr = s.updated_at ? s.updated_at.replace('T', ' ').slice(0, 16) : ''
-          lines.push(`• \x1b[32m${s.id}\x1b[0m \x1b[37m"${s.title}"\x1b[0m \x1b[2m(${dateStr} | ${s.model})\x1b[0m`)
+          const createdAt = Date.parse(s.created_at)
+          const ageLabel = Number.isFinite(createdAt) && Date.now() - createdAt <= 24 * 60 * 60 * 1000
+            ? '\x1b[32m[NEW]\x1b[0m'
+            : '\x1b[90m[OLD]\x1b[0m'
+          const createdText = s.created_at ? s.created_at.replace('T', ' ').slice(0, 16) : 'unknown'
+          const updatedText = s.updated_at ? s.updated_at.replace('T', ' ').slice(0, 16) : 'unknown'
+          lines.push(`${ageLabel} \x1b[32m${s.id}\x1b[0m \x1b[37m"${s.title}"\x1b[0m\n  \x1b[2mCreated: ${createdText} | Updated: ${updatedText} | ${s.model}\x1b[0m`)
         }
         lines.push(`\n\x1b[33mUsage:\x1b[0m /resume <session-id>`)
         return { response: lines.join('\n') }

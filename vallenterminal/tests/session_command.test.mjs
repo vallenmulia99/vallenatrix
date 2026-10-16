@@ -37,6 +37,14 @@ test('/resume without an argument and /resume latest select newest saved session
   assert.match(command, /No saved sessions to resume/)
 })
 
+test('/sessions labels new and old sessions and shows created and updated dates', () => {
+  const command = main.slice(main.indexOf("if (cmd === '/sessions')"), main.indexOf("if (cmd === '/resume')"))
+  assert.match(command, /created_at/)
+  assert.match(command, /\[NEW\]/)
+  assert.match(command, /\[OLD\]/)
+  assert.match(command, /updated_at/)
+})
+
 test('session command appears in slash autocomplete and help', () => {
   assert.match(renderer, /cmd: '\/session', desc: 'Hapus seluruh riwayat sesi \(perlu konfirmasi\)'/)
   assert.match(main, /\/session clearall - Delete all saved sessions \(requires confirm\)/)

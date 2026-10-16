@@ -1,13 +1,18 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, relative, resolve, sep, join } from 'node:path'
 
 export type TypeScriptDiagnosticSnapshot = Map<string, string>
 type TypeScriptService = { service: any; ts: any; versions: Map<string, number> }
 const services = new Map<string, TypeScriptService>()
 const MAX_SERVICES = 16
+const MAX_BYTES = 2 * 1024 * 1024
 
 function loadTypeScript(): any | null {
   try { return require('typescript') } catch { return null }
+}
+
+function exceedsSizeLimit(file: string): boolean {
+  try { return statSync(file).size > MAX_BYTES } catch { return true }
 }
 
 function isInside(root: string, path: string): boolean {
@@ -19,6 +24,7 @@ function getService(filePath: string, workspaceDir: string): TypeScriptService |
   const root = resolve(workspaceDir)
   const file = resolve(filePath)
   if (!isInside(root, file) || !/\.tsx?$/.test(file)) return null
+  if (exceedsSizeLimit(file)) return null
   let dir = dirname(file)
   let configPath = ''
   while (dir === root || dir.startsWith(`${root}${sep}`)) {

@@ -15,10 +15,14 @@ test('terminal background process can be polled and killed by session id', async
   }))
   assert.equal(start.background, true)
   assert.ok(start.session_id)
-  await new Promise(resolve => setTimeout(resolve, 50))
-  const poll = JSON.parse(await registry.execute('process_manage', {
-    action: 'poll', session_id: start.session_id
-  }))
+  let poll
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 50))
+    poll = JSON.parse(await registry.execute('process_manage', {
+      action: 'poll', session_id: start.session_id
+    }))
+    if (poll.output.includes('ready')) break
+  }
   assert.equal(poll.session_id, start.session_id)
   assert.match(poll.output, /ready/)
   const killed = JSON.parse(await registry.execute('process_manage', {

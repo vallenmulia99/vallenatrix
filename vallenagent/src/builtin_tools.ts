@@ -930,6 +930,37 @@ export function registerBuiltinTools(
         return JSON.stringify({ error: `Directory not found: ${searchDir}` })
       }
 
+      // A single-file path must be searched directly: walking readdirSync on a file
+      // throws and was silently swallowed, returning zero matches.
+      if (statSync(fullSearchDir).isFile()) {
+        const fileTarget = fullSearchDir
+        if (target === 'files') {
+          const globReg = globToRegex(pattern)
+          const hit = globReg.test(basename(fileTarget)) || globReg.test(relative(dirname(fileTarget), fileTarget))
+          return JSON.stringify({ files: hit ? [fileTarget] : [], total_count: hit ? 1 : 0, truncated: false })
+        }
+        let fileRegex: RegExp
+        try {
+          fileRegex = new RegExp(pattern, 'i')
+        } catch {
+          fileRegex = new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+        }
+        const fileMatches: Array<{ file: string; line: number; content: string }> = []
+        try {
+          for (const [idx, lineText] of readFileSync(fileTarget, 'utf-8').split('\n').entries()) {
+            if (fileRegex.test(lineText)) {
+              fileMatches.push({ file: fileTarget, line: idx + 1, content: lineText.slice(0, 300) })
+              if (fileMatches.length >= offset + limit) break
+            }
+          }
+        } catch {}
+        return JSON.stringify({
+          matches: fileMatches.slice(offset, offset + limit),
+          total_count: fileMatches.length,
+          truncated: fileMatches.length > offset + limit
+        })
+      }
+
       if (target === 'files') {
         const foundFiles: string[] = []
         const regex = globToRegex(pattern)

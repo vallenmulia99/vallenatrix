@@ -58,6 +58,20 @@ function timeoutError(): Error {
   return Object.assign(new Error('Provider request deadline exceeded'), { name: 'TimeoutError' })
 }
 
+function requestDiagnostics(request: CompletionRequest, body: string): string {
+  const roles: Record<string, number> = {}
+  let contentChars = 0
+  let maxMessageChars = 0
+  for (const message of request.messages) {
+    roles[message.role] = (roles[message.role] || 0) + 1
+    const length = typeof message.content === 'string' ? message.content.length : 0
+    contentChars += length
+    maxMessageChars = Math.max(maxMessageChars, length)
+  }
+  const model = String(request.model || '').replace(/[\r\n]/g, '').slice(0, 100)
+  return `request diagnostics: model=${model}, messages=${request.messages.length}, roles=${JSON.stringify(roles)}, content_chars=${contentChars}, max_message_chars=${maxMessageChars}, payload_bytes=${Buffer.byteLength(body)}, tools=${request.tools?.length || 0}, max_tokens=${request.max_tokens ?? 'unset'}`
+}
+
 function waitForRetry(delayMs: number, signal: AbortSignal | undefined, deadline: number): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(signal.reason || new DOMException('Aborted', 'AbortError'))
@@ -116,6 +130,16 @@ export class OpenAICompatibleProvider implements Provider {
         : timeoutSignal
 
       let response: Response
+      const payload = {
+        model: request.model || this.model,
+        messages: request.messages,
+        tools: request.tools,
+        max_tokens: request.max_tokens,
+        temperature: request.temperature,
+        stream: isStream,
+        ...(isStream ? { stream_options: { include_usage: true } } : {})
+      }
+      const body = JSON.stringify(payload)
       try {
         response = await fetch(`${this.baseURL}/chat/completions`, {
           method: 'POST',
@@ -123,15 +147,7 @@ export class OpenAICompatibleProvider implements Provider {
             'Content-Type': 'application/json',
             ...(this.apiKey ? { 'Authorization': `Bearer ${this.apiKey}` } : {})
           },
-          body: JSON.stringify({
-            model: request.model || this.model,
-            messages: request.messages,
-            tools: request.tools,
-            max_tokens: request.max_tokens,
-            temperature: request.temperature,
-            stream: isStream,
-            ...(isStream ? { stream_options: { include_usage: true } } : {})
-          }),
+          body,
           signal
         })
       } catch (err: any) {
@@ -162,7 +178,8 @@ export class OpenAICompatibleProvider implements Provider {
 
         if (Date.now() >= deadline) throw timeoutError()
         const error = await response.text()
-        throw new Error(`Provider API error: ${response.status} ${error}`)
+        const diagnostic = status === 400 ? ` ${requestDiagnostics(request, body)}` : ''
+        throw new Error(`Provider API error: ${response.status} ${error}${diagnostic}`)
       }
 
       if (!isStream || !response.body) {

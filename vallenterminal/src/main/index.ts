@@ -10,6 +10,7 @@ import { registerMediaProtocol, selectMediaFile } from './media'
 import { handleSkillsCommand } from './skills_commands'
 import { getStartupPayload } from './banner'
 import { savePastedText } from './paste-store'
+import { formatPerf, measurePerf } from './perf'
 
 app.setName('Vallenatrix')
 
@@ -418,8 +419,10 @@ function setupIpc(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.SYSTEM_BANNER, async (event) => {
-    getWindowForSender(event.sender)
-    return getStartupPayload()
+    const window = getWindowForSender(event.sender)
+    const runtime = getWindowRuntime(window)
+    const terminal = getActiveTerminalRuntime(runtime)
+    return getStartupPayload(getAgentInstance(terminal, window.id))
   })
 
   ipcMain.handle(IPC_CHANNELS.AGENT_CHAT, async (event, { message, model: userModel, terminalId: requestedTerminalId }: { message: string; model?: string; terminalId?: string }) => {
@@ -466,6 +469,75 @@ function setupIpc(): void {
         const message = stopped ? 'Stopping agent turn…' : 'No agent turn is running.'
         if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.AGENT_STATUS, { type: stopped ? 'cancelled' : 'idle', message, terminalId: terminalRuntime.id })
         return { response: message, stopped }
+      }
+
+      if (cmd === '/auto') {
+        const setting = rest[0]?.trim().toLowerCase()
+        const current = resolveApprovalMode()
+        const status = current === 'off'
+          ? 'on (all tools auto-approved)'
+          : current === 'dangerous'
+            ? 'safe tools auto-approved; risky tools gated'
+            : 'off (every tool asks for approval)'
+        if (!setting || setting === 'status') {
+          return { response: `Auto mode: ${status}. /auto on auto-approves all tools, including destructive/sensitive actions. /auto safe gates risky tools. /auto off asks before every tool.` }
+        }
+        if (setting === 'on' || setting === 'safe' || setting === 'off') {
+          if (process.env.VALLENATRIX_APPROVAL || process.env.VALLENATRIX_APPROVAL_MODE) {
+            return { response: 'Approval mode dikunci oleh environment. Hapus VALLENATRIX_APPROVAL* lalu coba lagi.' }
+          }
+          if (setting === 'on') {
+            configManager.saveConfig({ agentApproval: 'off' })
+            return { response: 'Auto-approval ON untuk semua tool, termasuk command berisiko dan operasi destruktif. Tool bisa menghapus atau mengubah data.' }
+          }
+          if (setting === 'safe') {
+            configManager.saveConfig({ agentApproval: 'dangerous' })
+            return { response: 'Auto-approval hanya untuk tool aman. Tool berisiko tetap minta izin.' }
+          }
+          configManager.saveConfig({ agentApproval: 'all' })
+          return { response: 'Auto-approval OFF. Setiap tool minta izin.' }
+        }
+        return { response: 'Usage: /auto [on|safe|off|status]' }
+      }
+
+      if (cmd === '/session') {
+        const subcommand = rest.join(' ').trim().toLowerCase()
+        if (subcommand === 'clearall') {
+          return {
+            response: '\x1b[33mHapus semua riwayat sesi lokal?\x1b[0m Ini tidak bisa dibatalkan. Konfirmasi dengan \x1b[1m/session clearall confirm\x1b[0m.'
+          }
+        }
+        if (subcommand === 'clearall confirm') {
+          const agents = [...windowRuntimes.values()]
+            .flatMap(windowRuntime => [...windowRuntime.terminals.values()])
+            .map(terminal => terminal.agentInstance)
+            .filter((instance, index, all) => instance && all.indexOf(instance) === index)
+          await Promise.all(agents.map(instance => instance.resetSession()))
+          const removed = agent.sessionManager.clearAllSessions()
+          return { response: `\x1b[32mRiwayat ${removed} sesi lokal dihapus. Sesi aktif direset.\x1b[0m` }
+        }
+        return { response: '\x1b[33mGunakan /session clearall untuk menghapus seluruh riwayat sesi.\x1b[0m' }
+      }
+
+      if (cmd === '/perf') {
+        const sample = await measurePerf()
+        return { response: formatPerf(sample) }
+      }
+
+      if (cmd === '/health') {
+        const provider = agent.getConfig().providers?.['9router']
+        let gatewayStatus = 'Not configured'
+        if (provider?.base_url) {
+          try {
+            await fetch(provider.base_url, { signal: AbortSignal.timeout(1500) })
+            gatewayStatus = 'Connected'
+          } catch {
+            gatewayStatus = 'Unreachable'
+          }
+        }
+        const memory = process.memoryUsage()
+        const mib = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MiB`
+        return { response: `Platform: ${process.platform} (${process.arch})\nMemory: RSS ${mib(memory.rss)}, heap used ${mib(memory.heapUsed)} / ${mib(memory.heapTotal)}, external ${mib(memory.external)}\n9router gateway: ${gatewayStatus}` }
       }
 
       if (cmd === '/token') {
@@ -559,18 +631,19 @@ function setupIpc(): void {
       }
 
       if (cmd === '/resume') {
-        if (rest.length === 0) {
-          return { response: '\x1b[31mUsage: /resume <session-id>\x1b[0m (Use /sessions to list available IDs)' }
-        }
-        const targetId = rest[0].trim()
-        const ok = agent.resumeSession(targetId)
+        const targetId = rest[0]?.trim() || 'latest'
+        const sessionId = targetId.toLowerCase() === 'latest'
+          ? agent.sessionManager.listSessions()[0]?.id
+          : targetId
+        if (!sessionId) return { response: '\x1b[33mNo saved sessions to resume.\x1b[0m' }
+        const ok = agent.resumeSession(sessionId)
         if (ok) {
           return {
-            response: `\x1b[32m✔ Resumed session [${targetId}]\x1b[0m\nModel: ${agent.provider.model}\nWorking Directory: ${agent.config.terminal?.cwd || process.cwd()}`,
+            response: `\x1b[32m✔ Resumed session [${sessionId}]\x1b[0m\nModel: ${agent.provider.model}\nWorking Directory: ${agent.config.terminal?.cwd || process.cwd()}`,
             updatedModel: agent.provider.model
           }
         } else {
-          return { response: `\x1b[31mSession not found: ${targetId}\x1b[0m` }
+          return { response: `\x1b[31mSession not found: ${sessionId}\x1b[0m` }
         }
       }
 
@@ -724,6 +797,10 @@ function setupIpc(): void {
 /memory        - Inspect persistent memory and user profile
 /todos         - View active task list
 /sessions      - List saved chat sessions
+/session clearall - Delete all saved sessions (requires confirm)
+/health        - Show platform, memory, and 9router gateway status
+/auto [on|off] - Auto-approve safe tools; dangerous tools still ask
+/perf          - Sample this app process CPU and RSS for 1 second
 /resume <id>   - Resume a previous chat session
 /cd <path>     - Change this terminal and agent's project folder
 /stop          - Interrupt active running agent turn
@@ -810,8 +887,18 @@ function setupIpc(): void {
         if (!agent.config.terminal) agent.config.terminal = {}
         agent.config.terminal.cwd = terminalRuntime.cwdOverride
       }
+      const savedSession = agent.sessionManager.listSessions().find((session: any) => session.id === agent.getSessionId())
+      const sessionTitle = String(savedSession?.title || '').replace(/[\x00-\x1f\x7f-\x9f]/g, '').replace(/"/g, '\\"')
+      const sessionDate = savedSession ? new Date(savedSession.updated_at) : null
+      const sessionDateText = sessionDate && !Number.isNaN(sessionDate.getTime())
+        ? sessionDate.toLocaleString('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        : ''
+      const sessionLabel = savedSession && sessionDateText
+        ? `${savedSession.id} ("${sessionTitle}") (${sessionDateText} | ${savedSession.model})`.slice(0, 63)
+        : ''
       return {
         response: res.response,
+        sessionLabel,
         completionStatus: res.completionStatus,
         telemetry: {
           totalTokens: res.totalTokens,

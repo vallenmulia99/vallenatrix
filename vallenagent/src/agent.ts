@@ -103,6 +103,14 @@ function estimateRequestTokens(messages: Message[], tools: any[]): number {
   return Math.ceil(asciiChars / 4) + otherChars + messages.length * 4 + tools.length * 8
 }
 
+function isExplicitContextOverflow(failure: string): boolean {
+  return /Provider API error: 413\b/i.test(failure) || /\b(?:context length exceeded|context window exceeded|maximum context|context size exceeded|too many tokens|token limit exceeded|prompt (?:is )?too long|max_model_len|request entity too large|payload too large|request_too_large)\b/i.test(failure)
+}
+
+function isMalformedToolCallError(failure: string): boolean {
+  return /\binvalid (?:tool|function)(?:[_ -]?call)? arguments\b|\bmalformed tool call\b|\binvalid tool-call json\b/i.test(failure)
+}
+
 function assertToolCallPairs(messages: Message[]): void {
   const calls = new Set<string>()
   const results = new Set<string>()
@@ -237,6 +245,18 @@ function buildSummaryLines(oldTurns: Message[], priorLines: string[] = [], maxCh
   return out
 }
 
+export function repairCompactionAck(history: Message[]): boolean {
+  let changed = false
+  for (let i = 1; i < history.length - 1; i++) {
+    if (history[i].role === 'assistant' && history[i].content === 'Summary noted. Continuing.' && history[i + 1].role === 'assistant') {
+      history.splice(i, 1)
+      changed = true
+      i--
+    }
+  }
+  return changed
+}
+
 export function compactHistory(history: Message[], keepTailCount: number = 8, preserveIndex = -1, force = false, maxSummaryChars: number = MAX_SUMMARY_CHARS): boolean {
   if (!force && history.length <= keepTailCount + 2) return false
   const startIndex = 1 // preserve system prompt at index 0
@@ -258,7 +278,9 @@ export function compactHistory(history: Message[], keepTailCount: number = 8, pr
     content: 'Summary noted. Continuing.'
   }
 
-  history.splice(startIndex, endIndex - startIndex, compactedMessage, ackMessage)
+  const replacement = [compactedMessage]
+  if (history[endIndex]?.role !== 'assistant') replacement.push(ackMessage)
+  history.splice(startIndex, endIndex - startIndex, ...replacement)
   return true
 }
 
@@ -409,6 +431,7 @@ export class AIAgent {
     this.sessionId = data.id
     this.fileReadCoverage.clear()
     this.conversationHistory = data.messages || []
+    repairCompactionAck(this.conversationHistory)
     this.todoStore.write(data.todos || [])
     this.activeSkill = null
     this.cachedSystemPrompt = this.conversationHistory.find(message => message.role === 'system')?.content || null
@@ -423,13 +446,13 @@ export class AIAgent {
     return true
   }
 
-  resetSession(nextSessionId?: string): void {
+  resetSession(nextSessionId?: string): Promise<void> {
     if (this.chatActive) {
       // Reset cannot safely mutate history while serialized chat is active.
       this.interrupt()
-      const resetAfterTurn = this.chatLock.then(() => { this.resetSession(nextSessionId) })
+      const resetAfterTurn = this.chatLock.then(() => this.resetSession(nextSessionId))
       this.chatLock = resetAfterTurn
-      return
+      return resetAfterTurn
     }
     this.conversationHistory = []
     this.activeSkill = null
@@ -438,6 +461,7 @@ export class AIAgent {
     this.sessionId = nextSessionId || `session-${Date.now()}`
     // BUG-20: Clear todo store on session reset
     this.todoStore.write([])
+    return Promise.resolve()
   }
 
   async chat(userMessage: string, callbacks?: AgentCallbacks, systemPrompt?: string): Promise<AgentResponse> {
@@ -547,8 +571,11 @@ export class AIAgent {
     const maxPrematureFinalAttempts = 2
 
     // Agent loop - mirroring Hermes conversation_loop.py
+    let finalizationGracePending = false
     try {
-      while (iterations < this.maxIterations) {
+      while (iterations < this.maxIterations || finalizationGracePending) {
+      const usingFinalizationGrace = iterations >= this.maxIterations
+      if (usingFinalizationGrace) finalizationGracePending = false
       if (this.isInterrupted) {
         this.isInterrupted = false
         const interruptedMsg = '\x1b[33m[Execution halted: Turn interrupted by user /stop]\x1b[0m'
@@ -665,13 +692,31 @@ export class AIAgent {
       try {
         response = await callProvider(requestMessages)
       } catch (error: any) {
-        // Not every gateway accepts cache_control: retry once without markers, then stop marking.
         const failure = String(error?.message || '')
         const rejectedCache = this.promptCacheEnabled && requestMessages !== messages && /(^|\D)400(\D|$)|invalid|unknown field|unsupported/i.test(failure)
-        if (!rejectedCache) throw error
-        logger.warn('[Agent] Provider rejected cache_control; retrying without prompt cache markers.')
-        this.promptCacheEnabled = false
-        response = await callProvider(stripCacheMarkers(requestMessages))
+        if (rejectedCache) {
+          logger.warn('[Agent] Provider rejected cache_control; retrying without prompt cache markers.')
+          this.promptCacheEnabled = false
+          response = await callProvider(stripCacheMarkers(requestMessages))
+        } else {
+          const malformedToolCall = isMalformedToolCallError(failure)
+          const explicitContextOverflow = !malformedToolCall && isExplicitContextOverflow(failure) && !/max_tokens/i.test(failure)
+          const genericBadRequest = !malformedToolCall && failure.includes('Provider API error: 400') && /invalid request/i.test(failure) && !/context length|context window|too many tokens|max_tokens/i.test(failure)
+          const inputOutputBudget = estimatedTokens + Math.max(0, outputTokenAllowance || 0)
+          if (!explicitContextOverflow && (!genericBadRequest || inputOutputBudget <= contextWindow * 0.5)) throw error
+
+          const retryMessages = [...messages]
+          const retryUserIndex = retryMessages.reduce((found, message, index) => message.role === 'user' && message.content === currentUserMessage.content ? index : found, -1)
+          const compressed = retryUserIndex >= 0 && compactHistory(retryMessages, 8, retryUserIndex, true, summaryCap)
+          if (!compressed || estimateRequestTokens(retryMessages, tools) >= estimatedTokens) throw error
+
+          const compactedHistory = [...this.conversationHistory]
+          const historyUserIndex = compactedHistory.indexOf(currentUserMessage)
+          if (historyUserIndex < 0 || !compactHistory(compactedHistory, 8, historyUserIndex, true, summaryCap)) throw error
+          logger.warn(`[Agent] ${explicitContextOverflow ? 'Explicit context/payload overflow' : 'Generic provider 400 on large request'} (${inputOutputBudget}/${contextWindow} estimated input+output tokens); retrying once with compacted history.`)
+          response = await callProvider(retryMessages)
+          this.conversationHistory = compactedHistory
+        }
       }
 
       const choice = response.choices[0]
@@ -746,6 +791,7 @@ export class AIAgent {
 
       // Check for tool calls
       if (toolCalls && toolCalls.length > 0) {
+        if (iterations >= this.maxIterations && !usingFinalizationGrace) finalizationGracePending = true
         toolCallCount += toolCalls.length
 
         let toolIndex = 0
@@ -1008,6 +1054,7 @@ export class AIAgent {
         const parsed = JSON.parse(result)
         if (!parsed.error) {
           this.verificationBaselineChanged = true
+          this.verification.markWorkspaceEdited()
           if (/\.(?:ts|tsx|mts|cts)$/i.test(String(parsed.path || toolArgs.path || ''))) {
             this.verificationTypescriptChanged = true
             this.verificationTypescriptVerified = false
@@ -1022,6 +1069,7 @@ export class AIAgent {
         const parsed = JSON.parse(result)
         if (parsed.success && Array.isArray(parsed.files)) {
           this.verificationBaselineChanged = true
+          this.verification.markWorkspaceEdited()
           if (parsed.files.some((file: any) => /\.(?:ts|tsx|mts|cts)$/i.test(String(file.path || '')))) {
             this.verificationTypescriptChanged = true
             this.verificationTypescriptVerified = false

@@ -203,9 +203,12 @@ export async function getStartupPayload(agentInstance?: any): Promise<StartupPay
     }
   ]
 
+  const sessionLabel = ''
+
   const guideBox = [
     borderTop('Vallenatrix Autonomous Terminal'),
     makeRow('Created by \x1b[33m@vallenganteng\x1b[0m'),
+    makeRow(sessionLabel),
     makeRow(''),
     makeRow('\x1b[1mQuick Commands:\x1b[0m'),
     makeRow('  \x1b[36m/help\x1b[0m       Show full command reference & shortcuts'),

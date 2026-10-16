@@ -14,6 +14,12 @@ const SAFE_TERMINAL_COMMANDS = new Set(['ls', 'pwd', 'cat', 'head', 'tail', 'git
 function isSafeSyntaxCheckLoop(command: string): boolean {
   return command.trim().replace(/\s+/g, ' ') === `cd vallen-anime-space-rpg && for f in $(find src tests server.mjs -name '*.js' -o -name '*.mjs'); do node --check "$f" || echo "SYNTAX FAIL $f"; done; echo "--- syntax ok ---"; npm test`
 }
+function isSafeTestLogPipeline(command: string): boolean {
+  const match = command.trim().match(/^cd\s+("[^"]+"|'[^']+'|[^&|;\n]+?)\s*&&\s*npm\s+test\s+2>&1\s*\|\s*tail\s+-30\s*&&\s*git\s+log\s+--oneline\s+-5\s+2>\/dev\/null\s*\|\s*head(?:\s+-n\s+\d+)?$/)
+  if (!match) return false
+  const directory = match[1].replace(/^["']|["']$/g, '').trim()
+  return directory.length > 0 && !isSensitivePath(directory)
+}
 const SENSITIVE_DIRS = ['.ssh', '.aws', '.gnupg', '.config', '.kube', '.docker', '.vallenatrix']
 const SENSITIVE_ROOTS = ['/etc', '/usr', '/boot', '/root']
 const SENSITIVE_RC = new Set(['.bashrc', '.zshrc', '.profile', '.bash_profile', '.zprofile', '.zshenv'])
@@ -119,7 +125,7 @@ export function requiresDangerousApproval(info: { name: string; args: Record<str
   }
   if (info.name !== 'terminal') return false
   const command = String(info.args.command || '')
-  if (isSafeSyntaxCheckLoop(command)) return false
+  if (isSafeSyntaxCheckLoop(command) || isSafeTestLogPipeline(command)) return false
   if (SHELL_WRAPPER.test(command) || TERMINAL_DANGERS.test(command)) return true
   const segments = shellSegments(command)
   if (!segments.length) return true

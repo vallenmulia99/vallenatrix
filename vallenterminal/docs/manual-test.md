@@ -8,7 +8,12 @@ Gunakan checklist ini untuk memverifikasi fitur Vallenatrix:
 - [x] Jalankan `vallenatrix --help` mencetak dokumentasi penggunaan.
 - [x] Jalankan `./install.sh --uninstall` menghapus symlink dengan bersih.
 
-## 2. Window & Shell Interaktif
+## 2. Resume Sesi
+- [ ] Jalankan `/sessions`, lalu `/resume` tanpa argumen; sesi paling baru harus dilanjutkan.
+- [ ] Jalankan `/resume latest`; sesi paling baru yang sama harus dilanjutkan.
+- [ ] Tanpa sesi tersimpan, kedua perintah menampilkan `No saved sessions to resume.`
+
+## 3. Window & Shell Interaktif
 - [x] Menjalankan `vallenatrix` membuka window frameless dengan titlebar kustom.
 - [x] Prompt shell default muncul dan menerima input keyboard.
 - [x] Perintah TUI seperti `vim`, `nano`, `htop`, atau `less` berjalan dengan layout yang tepat.

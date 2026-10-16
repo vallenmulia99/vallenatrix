@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import type { VallenApi } from '../preload/index'
+import { sanitizeConfig, validateTheme } from '../shared/types'
 import type { AppConfig, Theme } from '../shared/types'
 import { buildPromptForAgent, normalizePrompt, shouldOffloadPaste } from '../shared/prompt-input'
 import type { SavedPasteReference } from '../shared/prompt-input'
@@ -42,6 +43,7 @@ const sliderWinOpacity = document.getElementById('setting-win-opacity') as HTMLI
 const sliderBlur = document.getElementById('setting-blur') as HTMLInputElement
 const chkAutoPause = document.getElementById('setting-autopause') as HTMLInputElement
 const chkPetToggle = document.getElementById('setting-pet-toggle') as HTMLInputElement
+const selPetKind = document.getElementById('setting-pet-kind') as HTMLSelectElement
 const sliderPetScale = document.getElementById('setting-pet-scale') as HTMLInputElement
 const labelPetScale = document.getElementById('label-pet-scale-val') as HTMLSpanElement
 const settingPetScaleContainer = document.getElementById('setting-pet-scale-container') as HTMLDivElement
@@ -66,6 +68,9 @@ const btnFontInc = document.getElementById('btn-font-inc') as HTMLButtonElement
 const btnFontReset = document.getElementById('btn-font-reset') as HTMLButtonElement
 const btnSaveSettings = document.getElementById('btn-save-settings') as HTMLButtonElement
 const saveNotification = document.getElementById('save-notification') as HTMLDivElement
+const btnExportSettings = document.getElementById('btn-export-settings') as HTMLButtonElement
+const btnImportSettings = document.getElementById('btn-import-settings') as HTMLButtonElement
+const importSettingsFile = document.getElementById('setting-import-file') as HTMLInputElement
 
 // Agent color pickers
 const colorToolPreparing = document.getElementById('setting-color-tool-preparing') as HTMLInputElement
@@ -124,6 +129,7 @@ let activeTerminalId = ''
 const terminalOutputById = new Map<string, string>()
 const initializedTerminalModels = new Set<string>()
 const agentOutputById = new Map<string, string>()
+const displayedSessionLabels = new Set<string>()
 const runningAgentIds = new Set<string>()
 const agentTerminalOutputById = new Map<string, string>()
 const agentTerminalCommandById = new Map<string, string>()
@@ -243,6 +249,24 @@ function appendAgentOutput(terminalId: string, text: string): void {
   const current = agentOutputById.get(terminalId) || ''
   agentOutputById.set(terminalId, (current + text).slice(-200_000))
   if (terminalId === activeTerminalId) term.write(text)
+}
+
+function updateStartupSessionRow(label: string): void {
+  const buffer = term.buffer.active
+  const firstVisibleLine = buffer.baseY
+  const lastVisibleLine = Math.min(buffer.length - 1, buffer.baseY + term.rows - 1)
+  let creatorLine = -1
+  for (let line = firstVisibleLine; line <= lastVisibleLine; line++) {
+    if (buffer.getLine(line)?.translateToString(true).includes('Created by @vallenganteng')) {
+      creatorLine = line
+      break
+    }
+  }
+  const screenRow = creatorLine + 1 - buffer.baseY
+  if (!label || creatorLine < 0 || screenRow < 1 || screenRow > term.rows) return
+  const text = label.slice(0, 63)
+  const row = `\\x1b[36m│\\x1b[0m  ${text}${' '.repeat(Math.max(0, 63 - text.length))}\\x1b[36m│\\x1b[0m`
+  term.write(`\\x1b[s\\x1b[${screenRow};1H\\x1b[2K${row}\\x1b[u`)
 }
 
 // Setup Terminal
@@ -401,8 +425,113 @@ btnMaximize.addEventListener('click', () => window.api.maximizeWindow())
 btnClose.addEventListener('click', () => window.api.closeWindow())
 btnNewTerminal.addEventListener('click', () => window.api.newTerminal())
 
+const commandPalette = document.getElementById('command-palette') as HTMLDivElement
+const commandPaletteSearch = document.getElementById('command-palette-search') as HTMLInputElement
+const commandPaletteList = document.getElementById('command-palette-list') as HTMLDivElement
+const PALETTE_COMMANDS = [
+  { command: '/help', description: 'Show command help' },
+  { command: '/sessions', description: 'List saved sessions' },
+  { command: '/resume', description: 'Resume a saved session' },
+  { command: '/theme', description: 'Change terminal theme' },
+  { command: '/settings', description: 'Open settings' },
+  { command: '/health', description: 'Show runtime health' },
+  { command: '/auto', description: 'Auto-approve safe tools' },
+  { command: '/perf', description: 'Measure app CPU and memory' },
+  { command: '/new', description: 'Start a new conversation' }
+]
+let filteredPaletteCommands = [...PALETTE_COMMANDS]
+let activePaletteIndex = 0
+let paletteOpener: HTMLElement | null = null
+
+function renderCommandPalette(): void {
+  commandPaletteList.replaceChildren()
+  if (!filteredPaletteCommands.length) {
+    const empty = document.createElement('div')
+    empty.className = 'command-palette-empty'
+    empty.textContent = 'No matching commands'
+    commandPaletteList.append(empty)
+    return
+  }
+  filteredPaletteCommands.forEach((item, index) => {
+    const option = document.createElement('button')
+    option.type = 'button'
+    option.className = `command-palette-item${index === activePaletteIndex ? ' active' : ''}`
+    option.setAttribute('role', 'option')
+    option.setAttribute('aria-selected', String(index === activePaletteIndex))
+    const command = document.createElement('span')
+    command.className = 'command-palette-command'
+    command.textContent = item.command
+    const description = document.createElement('span')
+    description.className = 'command-palette-description'
+    description.textContent = item.description
+    option.append(command, description)
+    option.addEventListener('click', () => runPaletteCommand(item.command))
+    commandPaletteList.append(option)
+  })
+}
+
+function openCommandPalette(opener: HTMLElement): void {
+  paletteOpener = opener
+  commandPaletteSearch.value = ''
+  filteredPaletteCommands = [...PALETTE_COMMANDS]
+  activePaletteIndex = 0
+  renderCommandPalette()
+  commandPalette.classList.remove('hidden')
+  commandPaletteSearch.focus()
+}
+
+function closeCommandPalette(): void {
+  commandPalette.classList.add('hidden')
+  paletteOpener?.focus()
+  paletteOpener = null
+}
+
+function runPaletteCommand(command: string): void {
+  closeCommandPalette()
+  if (command === '/settings') {
+    toggleSettings()
+    return
+  }
+  chatInput.value = command
+  resizeChatInput()
+  void sendChatMessage()
+}
+
+commandPaletteSearch.addEventListener('input', () => {
+  const query = commandPaletteSearch.value.trim().toLowerCase()
+  filteredPaletteCommands = PALETTE_COMMANDS.filter((item) => `${item.command} ${item.description}`.toLowerCase().includes(query))
+  activePaletteIndex = 0
+  renderCommandPalette()
+})
+commandPaletteSearch.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    closeCommandPalette()
+  } else if (e.key === 'ArrowDown' && filteredPaletteCommands.length) {
+    e.preventDefault()
+    activePaletteIndex = (activePaletteIndex + 1) % filteredPaletteCommands.length
+    renderCommandPalette()
+  } else if (e.key === 'ArrowUp' && filteredPaletteCommands.length) {
+    e.preventDefault()
+    activePaletteIndex = (activePaletteIndex - 1 + filteredPaletteCommands.length) % filteredPaletteCommands.length
+    renderCommandPalette()
+  } else if (e.key === 'Enter' && filteredPaletteCommands[activePaletteIndex]) {
+    e.preventDefault()
+    runPaletteCommand(filteredPaletteCommands[activePaletteIndex].command)
+  }
+})
+commandPalette.addEventListener('mousedown', (e) => {
+  if (e.target === commandPalette) closeCommandPalette()
+})
+
 // Global keyboard shortcuts
 document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'p') {
+    e.preventDefault()
+    e.stopPropagation()
+    openCommandPalette(e.target as HTMLElement)
+    return
+  }
   if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'm') {
     e.preventDefault()
     e.stopPropagation()
@@ -450,7 +579,9 @@ document.addEventListener('keydown', (e) => {
   // Block typing outside chat input (except terminal and settings)
   const target = e.target as HTMLElement
   const isChatInput = target === chatInput || target.id === 'chat-input'
+  const isPaletteInput = target === commandPaletteSearch
   const isSettingsInput = settingsPanel.contains(target) && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')
+  if (isPaletteInput) return
   const isTerminalArea = target.classList.contains('xterm') || target.closest('.xterm') !== null
   
   // Block printable keys outside allowed areas
@@ -770,6 +901,9 @@ chkPetToggle.addEventListener('change', () => {
   settingPetScaleContainer.style.display = chkPetToggle.checked ? 'flex' : 'none'
 })
 
+selPetKind.value = pet.getKind()
+selPetKind.addEventListener('change', () => pet.setKind(selPetKind.value as 'cat' | 'fox' | 'slime' | 'robot'))
+
 sliderPetScale.addEventListener('input', () => {
   const val = Number(sliderPetScale.value) / 100
   labelPetScale.textContent = `${sliderPetScale.value}%`
@@ -836,6 +970,92 @@ colorError.addEventListener('input', () => {
 })
 
 // Save settings button
+const safeConfigForTransfer = (config: AppConfig) => ({
+  themeName: config.themeName,
+  windowOpacity: config.windowOpacity,
+  autoPauseVideo: config.autoPauseVideo,
+  background: { type: config.background.type, dim: config.background.dim, fit: config.background.fit, blur: config.background.blur, opacity: config.background.opacity },
+  terminal: { ...config.terminal },
+  ...(config.agentApproval ? { agentApproval: config.agentApproval } : {})
+})
+
+btnExportSettings.addEventListener('click', async () => {
+  const themeList = await window.api.listThemes()
+  const themes = (await Promise.all(themeList.filter((theme) => !theme.isBuiltIn).map((theme) => window.api.getTheme(theme.name))))
+    .filter((theme): theme is Theme => theme !== null)
+  const payload = { format: 'vallenatrix-settings', version: 1, config: safeConfigForTransfer(activeConfig), themes }
+  const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'vallenatrix-settings.json'
+  link.click()
+  URL.revokeObjectURL(url)
+})
+
+btnImportSettings.addEventListener('click', () => importSettingsFile.click())
+importSettingsFile.addEventListener('change', async () => {
+  const file = importSettingsFile.files?.[0]
+  importSettingsFile.value = ''
+  if (!file) return
+  try {
+    const raw: unknown = JSON.parse(await file.text())
+    if (!raw || typeof raw !== 'object') throw new Error('Invalid settings file')
+    const data = raw as Record<string, unknown>
+    if (data.format !== 'vallenatrix-settings' || data.version !== 1 || !data.config || typeof data.config !== 'object' || !Array.isArray(data.themes)) throw new Error('Invalid settings file')
+    const imported = data.config as Record<string, unknown>
+    const safeKeys = ['themeName', 'windowOpacity', 'autoPauseVideo', 'background', 'terminal', 'agentApproval']
+    if (Object.keys(data).some((key) => !['format', 'version', 'config', 'themes'].includes(key)) || Object.keys(imported).some((key) => !safeKeys.includes(key))) throw new Error('Settings file contains unsupported fields')
+    if (typeof imported.themeName !== 'string' || typeof imported.windowOpacity !== 'number' || imported.windowOpacity < 0.1 || imported.windowOpacity > 1 || typeof imported.autoPauseVideo !== 'boolean' || !imported.background || typeof imported.background !== 'object' || !imported.terminal || typeof imported.terminal !== 'object') throw new Error('Invalid settings config')
+    const background = imported.background as Record<string, unknown>
+    const terminal = imported.terminal as Record<string, unknown>
+    if (Object.keys(background).some((key) => !['type', 'dim', 'fit', 'blur', 'opacity'].includes(key)) || Object.keys(terminal).some((key) => !['fontFamily', 'fontSize', 'lineHeight', 'letterSpacing', 'cursorStyle', 'cursorBlink', 'scrollback'].includes(key))) throw new Error('Settings file contains unsupported fields')
+    const config = sanitizeConfig({ ...activeConfig, ...imported, background: { ...activeConfig.background, ...background }, shell: activeConfig.shell })
+    const themes = data.themes.map((rawTheme) => {
+      if (!rawTheme || typeof rawTheme !== 'object' || Object.keys(rawTheme).some((key) => !['name', 'displayName', 'colors', 'backgroundPreset'].includes(key))) return null
+      return validateTheme(rawTheme)
+    })
+    const themeColorsAreSafe = data.themes.every((rawTheme) => {
+      if (!rawTheme || typeof rawTheme !== 'object') return false
+      const theme = rawTheme as Record<string, unknown>
+      if (!theme.colors || typeof theme.colors !== 'object' || Object.keys(theme.colors).some((key) => !['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white', 'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite', 'foreground', 'background', 'cursor', 'cursorAccent', 'selectionBackground'].includes(key))) return false
+      return !theme.backgroundPreset || (typeof theme.backgroundPreset === 'object' && Object.keys(theme.backgroundPreset).every((key) => ['type', 'dim', 'fit', 'blur', 'opacity'].includes(key)))
+    })
+    if (!themeColorsAreSafe) throw new Error('Theme contains unsupported fields')
+    if (typeof imported.agentApproval !== 'undefined' && !['dangerous', 'all', 'off'].includes(imported.agentApproval as string)) throw new Error('Invalid agent approval setting')
+    if (!['none', 'color', 'image', 'video'].includes(background.type as string) || !['cover', 'contain', 'fill', 'none'].includes(background.fit as string) || !['block', 'underline', 'bar'].includes(terminal.cursorStyle as string)) throw new Error('Invalid settings config')
+    if (typeof background.dim !== 'number' || background.dim < 0 || background.dim > 1 || typeof background.opacity !== 'number' || background.opacity < 0 || background.opacity > 1 || typeof background.blur !== 'number' || background.blur < 0 || background.blur > 50 || typeof terminal.fontFamily !== 'string' || typeof terminal.fontSize !== 'number' || terminal.fontSize < 8 || terminal.fontSize > 48 || typeof terminal.lineHeight !== 'number' || terminal.lineHeight < 0.8 || terminal.lineHeight > 3 || typeof terminal.letterSpacing !== 'number' || terminal.letterSpacing < -2 || terminal.letterSpacing > 10 || typeof terminal.cursorBlink !== 'boolean' || typeof terminal.scrollback !== 'number' || terminal.scrollback < 100 || terminal.scrollback > 100000) throw new Error('Invalid settings config')
+    if (themes.some((theme) => theme === null)) throw new Error('Invalid theme in settings file')
+    const validatedThemes = themes as Theme[]
+    for (const theme of validatedThemes) {
+      if (!await window.api.saveTheme(theme)) throw new Error(`Could not save theme: ${theme.name}`)
+    }
+    await window.api.saveConfig({ ...safeConfigForTransfer(config), background: { ...config.background, path: activeConfig.background.path } })
+    activeConfig = { ...activeConfig, ...config, shell: activeConfig.shell }
+    const themeList = await window.api.listThemes()
+    selTheme.innerHTML = ''
+    for (const theme of themeList) {
+      const option = document.createElement('option')
+      option.value = theme.name
+      option.textContent = `${theme.displayName}${theme.isBuiltIn ? '' : ' (Custom)'}`
+      selTheme.appendChild(option)
+    }
+    const theme = await window.api.getTheme(activeConfig.themeName)
+    if (theme) applyTheme(theme)
+    term.options.fontFamily = activeConfig.terminal.fontFamily
+    term.options.fontSize = activeConfig.terminal.fontSize
+    term.options.lineHeight = activeConfig.terminal.lineHeight
+    term.options.cursorBlink = activeConfig.terminal.cursorBlink
+    term.options.cursorStyle = activeConfig.terminal.cursorStyle
+    applyBackground()
+    updateSettingsForm()
+    saveNotification.textContent = 'Settings imported'
+  } catch (error) {
+    saveNotification.textContent = error instanceof Error ? error.message : 'Could not import settings'
+  }
+  saveNotification.style.display = 'block'
+  setTimeout(() => { saveNotification.style.display = 'none' }, 2500)
+})
+
 btnSaveSettings.addEventListener('click', () => {
   saveAgentColors()
   
@@ -1108,6 +1328,10 @@ async function sendChatMessage() {
       appendAgentOutput(requestTerminalId, `\x1b[31m[Agent Error]\x1b[0m ${res.error}\r\n`)
       updateStatus('Ready', 'idle')
     } else if (res.response) {
+      if (res.sessionLabel && !displayedSessionLabels.has(requestTerminalId)) {
+        displayedSessionLabels.add(requestTerminalId)
+        if (requestTerminalId === activeTerminalId) updateStartupSessionRow(res.sessionLabel)
+      }
       const boxWidth = Math.max(60, Math.min(term.cols - 2, 80))
       const topFill = Math.max(0, boxWidth - 18)
       const topBar = `\x1b[36m╭─ ☤ Vallenatrix ${'─'.repeat(topFill)}╮\x1b[0m`
@@ -1378,11 +1602,15 @@ const SLASH_COMMANDS = [
   { cmd: '/themes', desc: 'Lihat daftar tema warna UI' },
   { cmd: '/theme', desc: 'Ganti tema warna UI secara instan' },
   { cmd: '/stats', desc: 'Telemetry sesi, model & context' },
+  { cmd: '/auto', desc: 'Auto-approve tool aman; tool berbahaya tetap minta izin' },
+  { cmd: '/health', desc: 'Cek koneksi gateway, memori, platform' },
+  { cmd: '/perf', desc: 'Ukur CPU/RSS proses aplikasi' },
   { cmd: '/pty', desc: 'Beralih ke Direct Bash Shell (Ctrl+`)' },
   { cmd: '/cd', desc: 'Ganti folder proyek untuk terminal dan agent tab ini' },
   { cmd: '/memory', desc: 'Lihat catatan memori & profil user' },
   { cmd: '/todos', desc: 'Lihat daftar tugas (active task list)' },
   { cmd: '/sessions', desc: 'Daftar riwayat sesi chat tersimpan' },
+  { cmd: '/session', desc: 'Hapus seluruh riwayat sesi (perlu konfirmasi)' },
   { cmd: '/resume', desc: 'Lanjutkan sesi chat sebelumnya' },
   { cmd: '/stop', desc: 'Hentikan paksa turn yang sedang jalan' },
   { cmd: '/new', desc: 'Mulai percakapan sesi baru' },

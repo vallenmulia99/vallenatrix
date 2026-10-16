@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AIAgent, compactHistory, compactActiveTurn, pruneOldToolResults } from '../dist/agent.js'
+import { AIAgent, compactHistory, compactActiveTurn, pruneOldToolResults, repairCompactionAck } from '../dist/agent.js'
 import { DEFAULT_CONFIG } from '../dist/config.js'
 
 function makeAgent(t, opts = {}) {
@@ -30,6 +30,79 @@ test('prompt tokens do not consume the per-turn budget (large context, many iter
   const result = await agent.chat('check budget')
   assert.equal(result.response, 'all done')
   assert.equal(calls, 13)
+})
+
+test('explicit context and payload overflow retry compact history below generic-size threshold', async t => {
+  for (const failure of [
+    'Provider API error: 400 {"error":{"message":"maximum context length exceeded"}}',
+    'Provider API error: 413 Request Entity Too Large'
+  ]) {
+    const agent = makeAgent(t, { config: { default_context_window: 128_000, max_output_tokens: 4_096 } })
+    agent.provider.model = 'mock'
+    agent.promptCacheEnabled = false
+    agent.config.context_windows = { mock: 128_000 }
+    agent.conversationHistory = [{ role: 'system', content: 'system prompt' }, { role: 'user', content: 'original task' }]
+    for (let i = 0; i < 20; i++) {
+      agent.conversationHistory.push({ role: 'assistant', content: `old step ${i} ${'x'.repeat(1_000)}` })
+      agent.conversationHistory.push({ role: 'user', content: `follow-up ${i}` })
+    }
+    const requests = []
+    agent.provider.chat = async request => {
+      requests.push(request)
+      if (requests.length === 1) throw new Error(failure)
+      return { choices: [{ message: { role: 'assistant', content: 'recovered' }, finish_reason: 'stop' }] }
+    }
+    const result = await agent.chat('hai')
+    assert.equal(result.response, 'recovered')
+    assert.equal(requests.length, 2)
+    assert.ok(requests[1].messages.length < requests[0].messages.length)
+    assert.ok(requests[1].messages.some(message => message.role === 'user' && message.content === 'hai'))
+  }
+})
+
+test('generic 400 on a high input-plus-output budget retries with compacted history', async t => {
+  const agent = makeAgent(t, { config: { default_context_window: 64_000, max_output_tokens: 32_768 } })
+  agent.provider.model = 'mock'
+  agent.promptCacheEnabled = false
+  agent.config.context_windows = { mock: 64_000 }
+  agent.conversationHistory = [{ role: 'system', content: 'system prompt' }, { role: 'user', content: 'original task' }]
+  for (let i = 0; i < 30; i++) {
+    agent.conversationHistory.push({ role: 'assistant', content: `old step ${i} ${'x'.repeat(1_000)}` })
+    agent.conversationHistory.push({ role: 'user', content: `follow-up ${i}` })
+  }
+  agent.conversationHistory.push({ role: 'assistant', content: 'ready' })
+  const originalCount = agent.conversationHistory.length
+  const requests = []
+  agent.provider.chat = async request => {
+    requests.push(request)
+    if (requests.length === 1) throw new Error('Provider API error: 400 {"error":{"message":"[400]: {\\"error\\":{\\"message\\":\\"Invalid request\\",\\"type\\":\\"upstream_error\\"}}"}}')
+    return { choices: [{ message: { role: 'assistant', content: 'recovered' }, finish_reason: 'stop' }] }
+  }
+  const result = await agent.chat('hai')
+  assert.equal(result.response, 'recovered')
+  assert.equal(requests.length, 2)
+  assert.ok(requests[1].messages.length < requests[0].messages.length)
+  assert.ok(requests[1].messages.some(message => message.role === 'user' && message.content === 'hai'))
+  assert.ok(agent.conversationHistory.length < originalCount + 2, 'successful retry commits compacted history')
+})
+
+test('malformed tool-call 400 does not trigger unrelated history compaction retry', async t => {
+  const agent = makeAgent(t, { config: { default_context_window: 64_000, max_output_tokens: 32_768 } })
+  agent.provider.model = 'mock'
+  agent.promptCacheEnabled = false
+  agent.config.context_windows = { mock: 64_000 }
+  agent.conversationHistory = [{ role: 'system', content: 'system prompt' }, { role: 'user', content: 'original task' }]
+  for (let i = 0; i < 30; i++) {
+    agent.conversationHistory.push({ role: 'assistant', content: `old step ${i} ${'x'.repeat(1_000)}` })
+    agent.conversationHistory.push({ role: 'user', content: `follow-up ${i}` })
+  }
+  let requests = 0
+  agent.provider.chat = async () => {
+    requests++
+    throw new Error('Provider API error: 400 Invalid request: invalid function_call arguments')
+  }
+  await assert.rejects(agent.chat('hai'), /invalid function_call arguments/)
+  assert.equal(requests, 1)
 })
 
 test('per-request max_tokens is capped so models with small output limits are not rejected', async t => {
@@ -60,6 +133,39 @@ test('compaction keeps the NEWEST steps and the original task, not just the olde
   assert.ok(summary.content.includes('ORIGINAL_TASK'))
   assert.ok(summary.content.includes('step-51'), 'newest compacted step must survive')
   assert.ok(summary.content.includes('step-20'), 'middle steps must survive, not only the first 15')
+})
+
+test('resuming legacy compaction removes redundant ack before assistant tool-call', () => {
+  const history = [
+    { role: 'system', content: 'system' },
+    { role: 'user', content: 'Previous conversation summary' },
+    { role: 'assistant', content: 'Summary noted. Continuing.' },
+    { role: 'assistant', content: '', tool_calls: [toolCall('keep-call', 'read_file', { path: 'src/a.ts' })] },
+    { role: 'tool', tool_call_id: 'keep-call', name: 'read_file', content: 'ok' },
+    { role: 'user', content: 'current task' }
+  ]
+  assert.equal(repairCompactionAck(history), true)
+  assert.equal(history[2].tool_calls[0].id, 'keep-call')
+  assert.equal(history[3].tool_call_id, 'keep-call')
+  for (let i = 1; i < history.length; i++) {
+    assert.notEqual(history[i - 1].role === 'assistant' && history[i].role === 'assistant', true)
+  }
+})
+
+test('compaction summary never creates consecutive assistant messages before a tool call', () => {
+  const history = [
+    { role: 'system', content: 'system' },
+    { role: 'user', content: 'old task' },
+    { role: 'assistant', content: 'old answer' },
+    { role: 'user', content: 'next task' },
+    { role: 'assistant', content: '', tool_calls: [toolCall('keep-call', 'read_file', { path: 'src/a.ts' })] },
+    { role: 'tool', tool_call_id: 'keep-call', name: 'read_file', content: 'ok' },
+    { role: 'user', content: 'current task' }
+  ]
+  assert.equal(compactHistory(history, 2, 4, true), true)
+  for (let i = 1; i < history.length; i++) {
+    assert.notEqual(history[i - 1].role === 'assistant' && history[i].role === 'assistant', true)
+  }
 })
 
 test('compaction records tool calls and files touched', () => {

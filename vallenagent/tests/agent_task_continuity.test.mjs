@@ -32,6 +32,25 @@ test('session resume restores active todo checklist', async t => {
   assert.equal(calls, 3)
 })
 
+test('one finalization call is allowed when the last budgeted response requests tools', async t => {
+  const home = mkdtempSync(join(tmpdir(), 'task-finalization-grace-'))
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  process.env.VALLENATRIX_HOME = home
+  const agent = new AIAgent({ maxIterations: 1, isSubagent: true, backgroundReview: false })
+  agent.toolWhitelist = ['skills_list']
+  let calls = 0
+  agent.provider.chat = async () => {
+    calls++
+    if (calls === 1) return response('', [{ id: 'list-skills', type: 'function', function: { name: 'skills_list', arguments: '{}' } }])
+    return response('Done after tool work.')
+  }
+  const result = await agent.chat('Continue this task')
+  assert.equal(calls, 2)
+  assert.equal(result.iterations, 2)
+  assert.equal(result.completionStatus, 'complete')
+  assert.equal(result.response, 'Done after tool work.')
+})
+
 test('unfinished checklist blocks false final and runtime continues without streaming premature answer', async t => {
   const home = mkdtempSync(join(tmpdir(), 'task-final-gate-'))
   t.after(() => rmSync(home, { recursive: true, force: true }))

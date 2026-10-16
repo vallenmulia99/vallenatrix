@@ -33,6 +33,31 @@ test('mock server drives agent loop and preserves then resets conversation histo
   } finally { await server.close() }
 })
 
+test('provider 400 reports request shape without leaking prompt contents', async () => {
+  const server = await createMockProviderServer([
+    { status: 400, body: { error: { message: 'Invalid request' } } }
+  ])
+  try {
+    const provider = new OpenAICompatibleProvider('mock', server.url, '', 'mock')
+    await assert.rejects(
+      provider.chat({
+        model: 'mock',
+        messages: [{ role: 'user', content: 'PRIVATE_PROMPT_SENTINEL' }],
+        tools: [{ type: 'function', function: { name: 'test_tool' } }],
+        max_tokens: 123
+      }),
+      error => {
+        assert.match(error.message, /request diagnostics/)
+        assert.match(error.message, /messages=1/)
+        assert.match(error.message, /tools=1/)
+        assert.match(error.message, /max_tokens=123/)
+        assert.doesNotMatch(error.message, /PRIVATE_PROMPT_SENTINEL/)
+        return true
+      }
+    )
+  } finally { await server.close() }
+})
+
 test('mock server returns tool calls and HTTP 429 errors', async () => {
   const server = await createMockProviderServer([
     { body: completion({ role: 'assistant', content: null, tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'list_directory', arguments: '{"path":"."}' } }] }, 'tool_calls') },

@@ -141,6 +141,10 @@ export class VerificationLedger {
     this.turnStart = this.entries.length
   }
 
+  markWorkspaceEdited(): void {
+    this.turnStart = this.entries.length
+  }
+
   get count(): number {
     return this.entries.length
   }

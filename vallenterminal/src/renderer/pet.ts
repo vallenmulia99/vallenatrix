@@ -7,17 +7,17 @@ export interface PetOptions {
 
 const FRAMES = {
   walk1: `<svg viewBox="0 0 16 12" width="36" height="27" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
-    <rect x="10" y="0" width="1" height="2" fill="#ff2a6d"/>
+    <rect x="10" y="0" width="1" height="2" fill="#05d9e8"/>
     <rect x="11" y="1" width="1" height="1" fill="#22252a"/>
-    <rect x="13" y="0" width="1" height="2" fill="#ff2a6d"/>
+    <rect x="13" y="0" width="1" height="2" fill="#05d9e8"/>
     <rect x="14" y="1" width="1" height="1" fill="#22252a"/>
     <rect x="9" y="2" width="6" height="5" fill="#22252a"/>
     <rect x="13" y="3" width="1" height="2" fill="#05d9e8"/>
     <rect x="11" y="3" width="1" height="2" fill="#05d9e8"/>
     <rect x="14" y="4" width="2" height="1" fill="#ffffff" opacity="0.7"/>
-    <rect x="12" y="5" width="1" height="1" fill="#ff2a6d"/>
-    <rect x="9" y="6" width="5" height="1" fill="#ff2a6d"/>
-    <rect x="10" y="7" width="1" height="1" fill="#ffd166"/>
+    <rect x="12" y="5" width="1" height="1" fill="#05d9e8"/>
+    <rect x="9" y="6" width="5" height="1" fill="#05d9e8"/>
+    <rect x="10" y="7" width="1" height="1" fill="#05d9e8"/>
     <rect x="3" y="5" width="7" height="4" fill="#22252a"/>
     <rect x="5" y="7" width="4" height="2" fill="#ffffff"/>
     <rect x="2" y="4" width="1" height="2" fill="#22252a"/>
@@ -30,17 +30,17 @@ const FRAMES = {
   </svg>`,
 
   walk2: `<svg viewBox="0 0 16 12" width="36" height="27" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
-    <rect x="10" y="0" width="1" height="2" fill="#ff2a6d"/>
+    <rect x="10" y="0" width="1" height="2" fill="#05d9e8"/>
     <rect x="11" y="1" width="1" height="1" fill="#22252a"/>
-    <rect x="13" y="0" width="1" height="2" fill="#ff2a6d"/>
+    <rect x="13" y="0" width="1" height="2" fill="#05d9e8"/>
     <rect x="14" y="1" width="1" height="1" fill="#22252a"/>
     <rect x="9" y="2" width="6" height="5" fill="#22252a"/>
     <rect x="13" y="3" width="1" height="2" fill="#05d9e8"/>
     <rect x="11" y="3" width="1" height="2" fill="#05d9e8"/>
     <rect x="14" y="4" width="2" height="1" fill="#ffffff" opacity="0.7"/>
-    <rect x="12" y="5" width="1" height="1" fill="#ff2a6d"/>
-    <rect x="9" y="6" width="5" height="1" fill="#ff2a6d"/>
-    <rect x="10" y="7" width="1" height="1" fill="#ffd166"/>
+    <rect x="12" y="5" width="1" height="1" fill="#05d9e8"/>
+    <rect x="9" y="6" width="5" height="1" fill="#05d9e8"/>
+    <rect x="10" y="7" width="1" height="1" fill="#05d9e8"/>
     <rect x="3" y="5" width="7" height="4" fill="#22252a"/>
     <rect x="5" y="7" width="4" height="2" fill="#ffffff"/>
     <rect x="2" y="5" width="1" height="2" fill="#22252a"/>
@@ -53,16 +53,16 @@ const FRAMES = {
   </svg>`,
 
   sit: `<svg viewBox="0 0 16 12" width="36" height="27" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
-    <rect x="9" y="1" width="1" height="2" fill="#ff2a6d"/>
+    <rect x="9" y="1" width="1" height="2" fill="#05d9e8"/>
     <rect x="10" y="2" width="1" height="1" fill="#22252a"/>
-    <rect x="12" y="1" width="1" height="2" fill="#ff2a6d"/>
+    <rect x="12" y="1" width="1" height="2" fill="#05d9e8"/>
     <rect x="13" y="2" width="1" height="1" fill="#22252a"/>
     <rect x="8" y="3" width="6" height="5" fill="#22252a"/>
     <rect x="12" y="4" width="1" height="2" fill="#05d9e8"/>
     <rect x="10" y="4" width="1" height="2" fill="#05d9e8"/>
     <rect x="13" y="5" width="2" height="1" fill="#ffffff" opacity="0.7"/>
-    <rect x="11" y="6" width="1" height="1" fill="#ff2a6d"/>
-    <rect x="8" y="7" width="5" height="1" fill="#ff2a6d"/>
+    <rect x="11" y="6" width="1" height="1" fill="#05d9e8"/>
+    <rect x="8" y="7" width="5" height="1" fill="#05d9e8"/>
     <rect x="4" y="6" width="6" height="5" fill="#22252a"/>
     <rect x="6" y="8" width="3" height="3" fill="#ffffff"/>
     <rect x="3" y="8" width="1" height="3" fill="#22252a"/>
@@ -72,7 +72,7 @@ const FRAMES = {
   </svg>`,
 
   sleep: `<svg viewBox="0 0 16 12" width="36" height="27" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
-    <rect x="11" y="5" width="2" height="1" fill="#ff2a6d"/>
+    <rect x="11" y="5" width="2" height="1" fill="#05d9e8"/>
     <rect x="13" y="6" width="1" height="1" fill="#22252a"/>
     <rect x="9" y="6" width="5" height="4" fill="#22252a"/>
     <rect x="11" y="7" width="2" height="1" fill="#05d9e8"/>
@@ -85,6 +85,26 @@ const FRAMES = {
 }
 
 const MEOWS = ['nya~', 'nyaan!', '(=^･ω･^=)', 'vallen! ♥', 'purrr...', 'typing master! ✨', 'semangat! 🔥']
+const PETS = {
+  cat: { emoji: '🐈', color: '#05d9e8', name: 'Kucing' },
+  fox: { emoji: '🦊', color: '#f3eee8', name: 'Rubah putih-merah' },
+  slime: { emoji: '🟢', color: '#168cff', name: 'Slime biru' },
+  robot: { emoji: '🤖', color: '#ff9b42', name: 'Robot oranye' },
+  rabbit: { emoji: '🐇', color: '#f5d6e8', name: 'Kelinci' },
+  penguin: { emoji: '🐧', color: '#73c8ff', name: 'Pinguin' },
+  panda: { emoji: '🐼', color: '#e8e8e8', name: 'Panda' },
+  tanuki: { emoji: '🦝', color: '#bb9b7a', name: 'Tanuki' },
+  chick: { emoji: '🐣', color: '#ffd84d', name: 'Anak ayam' },
+  dragon: { emoji: '🐉', color: '#a88cff', name: 'Naga mini' },
+  kitsune: { emoji: '🦊', color: '#fff4ed', name: 'Kitsune anime' },
+  neko: { emoji: '😺', color: '#ffb4d2', name: 'Neko anime' },
+  spirit: { emoji: '👻', color: '#c7f5ff', name: 'Roh imut' },
+  dango: { emoji: '🍡', color: '#ff9eb5', name: 'Dango' }
+} as const
+
+type PetKind = keyof typeof PETS
+export function getPetAccent(kind: PetKind): string { return PETS[kind].color }
+export function isPetKind(value: string): value is PetKind { return value in PETS }
 
 export function setFrameIfChanged(sprite: { innerHTML: string }, frame: string, currentFrame: string): string {
   if (currentFrame === frame) return currentFrame
@@ -109,9 +129,12 @@ export class TerminalPet {
   private lastFrame: string = ''
   private scale: number = 1.0
   private isAgentWorking: boolean = false
+  private kind: PetKind = 'cat'
 
   constructor(parent: HTMLElement) {
     this.parent = parent
+    const savedKind = localStorage.getItem('vallen_pet_kind')
+    if (savedKind && savedKind in PETS) this.kind = savedKind as PetKind
 
     // Container element
     this.petEl = document.createElement('div')
@@ -170,6 +193,18 @@ export class TerminalPet {
 
   public getScale(): number {
     return this.scale
+  }
+
+  public setKind(kind: PetKind): void {
+    if (!(kind in PETS)) return
+    this.kind = kind
+    localStorage.setItem('vallen_pet_kind', kind)
+    this.lastFrame = ''
+    this.setFrame(this.state === 'sleeping' ? FRAMES.sleep : this.state === 'idle' ? FRAMES.sit : FRAMES.walk1)
+  }
+
+  public getKind(): PetKind {
+    return this.kind
   }
 
   public setEnabled(enable: boolean): void {
@@ -312,7 +347,15 @@ export class TerminalPet {
   }
 
   private setFrame(frame: string): void {
-    this.lastFrame = setFrameIfChanged(this.spriteEl, frame, this.lastFrame)
+    if (this.kind === 'cat') {
+      this.lastFrame = setFrameIfChanged(this.spriteEl, frame, this.lastFrame)
+      return
+    }
+    const pet = PETS[this.kind]
+    const pose = frame === FRAMES.sleep ? 'sleep' : frame === FRAMES.sit ? 'sit' : 'walk'
+    const rendered = `<span class="pet-emoji pet-${this.kind} ${pose}" aria-hidden="true" style="--pet-accent:${pet.color}">${pet.emoji}</span>`
+    this.petEl.title = `${pet.name} (klik untuk reaksi, scroll untuk ubah ukuran)`
+    this.lastFrame = setFrameIfChanged(this.spriteEl, rendered, this.lastFrame)
   }
 
   private start(): void {

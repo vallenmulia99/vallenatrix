@@ -110,6 +110,7 @@ const api = {
   chatAgent: (message: string, model?: string, terminalId?: string): Promise<{
     response?: string
     error?: string
+    sessionLabel?: string
     telemetry?: any
     updatedModel?: string
     themeChange?: string

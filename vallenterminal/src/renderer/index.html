@@ -6,6 +6,15 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' vallen-media: data:; media-src 'self' vallen-media:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:;">
   <title>Vallenatrix</title>
   <style>
+    *, *::before, *::after {
+      animation: none !important;
+      transition: none !important;
+      scroll-behavior: auto !important;
+      box-shadow: none !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+
     * {
       margin: 0;
       padding: 0;
@@ -559,9 +568,9 @@
     }
 
     .btn-send-chat {
-      background: linear-gradient(135deg, #ff2a6d, #05d9e8);
+      background: #05d9e8;
       border: none;
-      color: #ffffff;
+      color: #102027;
       width: 36px;
       height: 36px;
       border-radius: 8px;
@@ -570,19 +579,9 @@
       justify-content: center;
       cursor: pointer;
       flex-shrink: 0;
-      transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
-      box-shadow: 0 2px 8px rgba(5, 217, 232, 0.3);
     }
 
-    .btn-send-chat:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(5, 217, 232, 0.5);
-    }
-
-    .btn-send-chat:active {
-      transform: translateY(0);
-      box-shadow: 0 1px 4px rgba(5, 217, 232, 0.4);
-    }
+    .btn-send-chat:hover, .btn-send-chat:active { background: #05d9e8; }
 
     .btn-send-chat.is-cancel {
       background: #d64545;
@@ -647,11 +646,6 @@
       cursor: pointer;
       user-select: none;
       transform-origin: bottom center;
-      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.8));
-    }
-
-    .terminal-pet:hover {
-      filter: drop-shadow(0 0 6px rgba(5, 217, 232, 0.9));
     }
 
     .pet-sprite {
@@ -678,7 +672,6 @@
       pointer-events: none;
       opacity: 0;
       transition: opacity 0.2s ease, transform 0.2s ease;
-      box-shadow: 0 2px 10px rgba(5, 217, 232, 0.35);
       z-index: 10;
     }
 
@@ -700,30 +693,13 @@
       transform: translateX(-50%) translateY(-3px);
     }
 
-    .pet-bubble.active-task {
-      border-color: #ffd166;
-      color: #ffd166;
-      box-shadow: 0 0 12px rgba(255, 209, 102, 0.45);
-      animation: pet-pulse 1.4s infinite alternate;
+    .pet-bubble.active-task, .pet-bubble.done-task {
+      border-color: #05d9e8;
+      color: #05d9e8;
     }
 
-    .pet-bubble.active-task::after {
-      border-top-color: #ffd166;
-    }
-
-    .pet-bubble.done-task {
-      border-color: #a3be8c;
-      color: #a3be8c;
-      box-shadow: 0 0 12px rgba(163, 190, 140, 0.45);
-    }
-
-    .pet-bubble.done-task::after {
-      border-top-color: #a3be8c;
-    }
-
-    @keyframes pet-pulse {
-      from { transform: translateX(-50%) translateY(-3px) scale(1); }
-      to { transform: translateX(-50%) translateY(-5px) scale(1.04); }
+    .pet-bubble.active-task::after, .pet-bubble.done-task::after {
+      border-top-color: #05d9e8;
     }
 
     /* Settings Panel */
@@ -766,7 +742,27 @@
       display: flex;
       flex-direction: column;
       gap: 16px;
+      scrollbar-gutter: stable;
     }
+
+    .settings-intro { margin: -4px 0 0; color: #a6adbb; font-size: 12px; line-height: 1.5; }
+    .settings-section { display: flex; flex-direction: column; gap: 12px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.1); }
+    .settings-section-title { margin: 0; color: #f2f4f8; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .settings-section-note { margin: -7px 0 0; color: #a6adbb; font-size: 11px; line-height: 1.45; }
+    .setting-label { color: #d6d9e0; font-size: 12px; font-weight: 600; }
+    .setting-help { color: #a6adbb; font-size: 11px; line-height: 1.4; }
+    .setting-card { padding: 12px; border: 1px solid rgba(255,255,255,.09); border-radius: 9px; background: rgba(255,255,255,.035); }
+    .pet-emoji { display: inline-block; font-size: 27px; line-height: 27px; transform: translateY(0); }
+    /* Keep global UI motion off; pet gets tiny, low-cost two-pose movement. */
+    @keyframes pet-bob { 50% { transform: translateY(-3px) rotate(-5deg); } }
+    @keyframes pet-sleep { 50% { transform: translateY(2px) scale(.94); } }
+    .pet-emoji.walk { animation: pet-bob 420ms steps(2, end) infinite !important; }
+    .pet-emoji.sleep { animation: pet-sleep 900ms steps(2, end) infinite !important; }
+    .pet-emoji.sit { transform: translateY(1px); }
+    .pet-robot { background: color-mix(in srgb, var(--pet-accent) 32%, transparent); border-radius: 7px; }
+    .pet-slime { background: color-mix(in srgb, var(--pet-accent) 35%, transparent); border-radius: 48%; }
+    .pet-fox, .pet-kitsune { background: linear-gradient(90deg, #fff 72%, #d94150 72%); border-radius: 45%; }
+    .pet-rabbit, .pet-neko { background: color-mix(in srgb, var(--pet-accent) 30%, transparent); border-radius: 50%; }
 
     .setting-group {
       display: flex;
@@ -867,6 +863,78 @@
       border-radius: 5px;
     }
 
+    /* Compact titlebar and status bar on narrow windows (minimum width: 400px). */
+    @media (max-width: 640px) {
+      #titlebar { gap: 6px; padding-inline: 8px; }
+      .titlebar-left { flex: 1; min-width: 0; overflow: hidden; gap: 7px; }
+      .titlebar-title { flex: 0 0 auto; }
+      .titlebar-new-terminal { flex: 0 0 28px; width: 28px; padding: 4px; overflow: hidden; font-size: 0; }
+      .titlebar-new-terminal::after { content: '+'; font: 13px system-ui, sans-serif; }
+      #terminal-tabs { flex: 1; min-width: 0; max-width: none; }
+      .terminal-tab { max-width: 130px; overflow: hidden; }
+      .titlebar-controls { flex: 0 0 auto; gap: 2px; }
+      .btn-icon { width: 25px; }
+      #status-bar { padding-inline: 8px; }
+      .status-left { min-width: 0; gap: 5px; overflow: hidden; }
+      .status-left .status-divider,
+      #status-context,
+      #status-bar-visual,
+      #status-telemetry,
+      #status-folder { display: none; }
+      .model-select-compact { max-width: 150px; }
+      .status-progress { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    }
+
+    @media (max-width: 460px) {
+      .titlebar-left { gap: 5px; }
+      .titlebar-icon { width: 16px; height: 16px; }
+      .titlebar-title { font-size: 11px; letter-spacing: 0; }
+      .terminal-tab { max-width: 96px; padding: 3px 5px; gap: 3px; }
+      .terminal-tab-close { width: 18px; min-width: 18px; height: 18px; }
+      .btn-icon { width: 23px; }
+      .model-select-compact { max-width: 118px; }
+      .status-left { gap: 4px; }
+      .status-right { min-width: 0; }
+      .status-progress { max-width: 64px; }
+    }
+
+    #command-palette {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: grid;
+      place-items: start center;
+      padding: min(18vh, 140px) 16px 16px;
+      background: rgba(0, 0, 0, 0.58);
+    }
+    #command-palette.hidden { display: none; }
+    .command-palette-dialog {
+      width: min(560px, 100%);
+      max-height: min(520px, 70vh);
+      overflow: hidden;
+      border: 1px solid rgba(5, 217, 232, 0.38);
+      border-radius: 10px;
+      color: #e9f0f5;
+      background: #111722;
+    }
+    #command-palette-search {
+      width: 100%;
+      padding: 16px;
+      border: 0;
+      border-bottom: 1px solid rgba(255,255,255,.12);
+      outline: none;
+      color: inherit;
+      background: transparent;
+      font: 15px system-ui, sans-serif;
+      user-select: text;
+    }
+    #command-palette-list { max-height: calc(min(520px, 70vh) - 56px); overflow-y: auto; padding: 6px; }
+    .command-palette-item { display: flex; justify-content: space-between; gap: 16px; padding: 10px 12px; border-radius: 6px; cursor: pointer; }
+    .command-palette-item.active { background: rgba(5, 217, 232, .18); }
+    .command-palette-command { color: #6ee7ef; font: 600 13px ui-monospace, monospace; }
+    .command-palette-description { color: #a6adbb; font-size: 12px; text-align: right; }
+    .command-palette-empty { padding: 14px 12px; color: #a6adbb; font-size: 13px; }
+
     /* Scrollbar */
     ::-webkit-scrollbar {
       width: 6px;
@@ -964,6 +1032,13 @@
     </div>
   </div>
 
+  <div id="command-palette" class="hidden" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="command-palette-dialog">
+      <input id="command-palette-search" type="search" aria-label="Search commands" placeholder="Type a command..." autocomplete="off" spellcheck="false">
+      <div id="command-palette-list" role="listbox" aria-label="Commands"></div>
+    </div>
+  </div>
+
   <!-- Layer 4: Settings Panel -->
   <div id="settings-panel">
     <div class="settings-header">
@@ -971,12 +1046,22 @@
       <button id="btn-settings-close" class="btn-icon">✕</button>
     </div>
     <div class="settings-body">
-      <!-- Theme Selection -->
+      <p class="settings-intro">Atur tema, latar, dan teman terminal. Beberapa pilihan langsung diterapkan; pengaturan visual disimpan lewat tombol di bawah.</p>
+
+      <section class="settings-section">
+        <h3 class="settings-section-title">Tampilan</h3>
+        <!-- Theme Selection -->
       <div class="setting-group">
-        <label class="setting-label">Tema Warna</label>
+        <label class="setting-label">Tema warna</label>
+        <div class="setting-help">Ubah warna teks, panel, dan aksen terminal.</div>
         <select id="setting-theme" class="setting-select"></select>
       </div>
 
+      </section>
+
+      <section class="settings-section">
+        <h3 class="settings-section-title">Latar belakang</h3>
+        <p class="settings-section-note">Pilih media, lalu atur posisi dan kontras agar teks tetap terbaca.</p>
       <!-- Background Type -->
       <div class="setting-group">
         <label class="setting-label">Tipe Background</label>
@@ -1051,10 +1136,34 @@
         </label>
       </div>
 
+      </section>
+
+      <section class="settings-section">
+        <h3 class="settings-section-title">Teman terminal</h3>
+        <p class="settings-section-note">Pilih karakter, atur ukuran, atau matikan kalau ingin ruang kerja bersih.</p>
+        <div class="setting-group setting-card">
+          <label class="setting-label" for="setting-pet-kind">Karakter</label>
+          <select id="setting-pet-kind" class="setting-select">
+            <option value="cat">🐈 Kucing</option>
+            <option value="fox">🦊 Rubah</option>
+            <option value="slime">🟢 Slime</option>
+            <option value="robot">🤖 Robot Claude (oranye)</option>
+            <option value="rabbit">🐇 Kelinci</option>
+            <option value="penguin">🐧 Pinguin</option>
+            <option value="panda">🐼 Panda</option>
+            <option value="tanuki">🦝 Tanuki</option>
+            <option value="chick">🐣 Anak ayam</option>
+            <option value="dragon">🐉 Naga mini</option>
+            <option value="kitsune">🦊 Kitsune anime</option>
+            <option value="neko">😺 Neko anime</option>
+            <option value="spirit">👻 Roh imut</option>
+            <option value="dango">🍡 Dango</option>
+          </select>
+        </div>
       <!-- Pet Toggle -->
       <div class="setting-group">
         <label class="setting-label" style="cursor: pointer;">
-          <span>Terminal Pet (Kucing Jalan)</span>
+          <span>Aktifkan teman terminal</span>
           <input id="setting-pet-toggle" type="checkbox" checked style="accent-color: #05d9e8;">
         </label>
       </div>
@@ -1068,6 +1177,10 @@
         <input id="setting-pet-scale" type="range" min="40" max="250" value="100" class="setting-slider">
       </div>
 
+      </section>
+
+      <section class="settings-section">
+        <h3 class="settings-section-title">Warna & teks</h3>
       <!-- Agent Colors (patch diff locked) -->
       <div class="setting-group">
         <label class="setting-label">Warna Agent</label>
@@ -1108,8 +1221,15 @@
         </div>
       </div>
 
+      </section>
+
       <!-- Save Settings -->
-      <div class="setting-group" style="margin-top: 20px;">
+      <div class="setting-group setting-card" style="margin-top: 4px;">
+        <div class="setting-row">
+          <button id="btn-export-settings" class="setting-btn" style="flex: 1;">Ekspor Pengaturan</button>
+          <button id="btn-import-settings" class="setting-btn" style="flex: 1;">Impor Pengaturan</button>
+          <input id="setting-import-file" type="file" accept="application/json,.json" hidden>
+        </div>
         <button id="btn-save-settings" class="setting-btn btn-accent" style="width: 100%;">
           💾 Simpan Semua Pengaturan
         </button>

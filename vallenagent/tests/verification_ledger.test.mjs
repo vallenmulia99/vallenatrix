@@ -81,6 +81,17 @@ test('verification: nudge fires once, only after edits and without evidence', t 
   assert.equal(withEvidence.shouldNudge(true), false, 'evidence already exists')
 })
 
+test('verification: later edits invalidate evidence from earlier in the same turn', () => {
+  const ledger = new VerificationLedger('session-stale-evidence')
+  ledger.beginTurn()
+  ledger.record('npm test', 0, 'tests pass')
+  assert.equal(ledger.shouldNudge(true), false, 'fresh evidence satisfies the edit')
+  ledger.markWorkspaceEdited()
+  assert.equal(ledger.shouldNudge(true), true, 'a later edit makes prior test stale')
+  ledger.record('npm test', 0, 'tests pass after edit')
+  assert.equal(ledger.shouldNudge(true), false, 'verification after the edit satisfies it')
+})
+
 test('verification: no dir means memory-only, never throws', () => {
   const ledger = new VerificationLedger('session-mem')
   ledger.record('npm run build', 0, 'build ok')

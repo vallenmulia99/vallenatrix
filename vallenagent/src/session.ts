@@ -207,4 +207,10 @@ export class SessionManager {
     }
     return deleted
   }
+
+  clearAllSessions(): number {
+    const sessions = this.listSessions()
+    for (const session of sessions) this.deleteSession(session.id)
+    return sessions.length
+  }
 }

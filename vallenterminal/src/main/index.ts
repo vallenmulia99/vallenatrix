@@ -149,6 +149,14 @@ function requestApproval(info: { id: string; name: string; args: Record<string, 
     target.webContents.send(IPC_CHANNELS.AGENT_STATUS, {
       type: 'approval', id: info.id, terminalId, approvalId, message: summary
     })
+    target.once('closed', () => {
+      const pending = pendingApprovals.get(approvalId)
+      if (pending) {
+        pendingApprovals.delete(approvalId)
+        clearTimeout(pending.timer)
+        pending.resolve(false)
+      }
+    })
   })
 }
 
@@ -196,7 +204,15 @@ function createWindow(startInTerminal = false): void {
 
   // Prevent non-local navigation
   window.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith('file://')) {
+    let isAppDocument = false
+    try {
+      const target = new URL(url)
+      const appDocument = new URL(`file://${resolve(__dirname, '../renderer/index.html')}`)
+      isAppDocument = target.protocol === 'file:' && target.href === appDocument.href
+    } catch {
+      // Invalid URL
+    }
+    if (!isAppDocument) {
       event.preventDefault()
       try {
         const parsed = new URL(url)
@@ -257,7 +273,8 @@ function startPtyShell(
 
 // Register IPC handlers
 function setupIpc(): void {
-  ipcMain.handle(IPC_CHANNELS.PASTE_SAVE, (_event, text: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.PASTE_SAVE, (event, text: unknown) => {
+    getWindowForSender(event.sender)
     if (typeof text !== 'string') throw new Error('Pasted content must be plain text.')
     return savePastedText(homedir(), text)
   })
@@ -375,36 +392,44 @@ function setupIpc(): void {
     return await selectMediaFile(getWindowForSender(event.sender))
   })
 
-  ipcMain.handle(IPC_CHANNELS.CONFIG_GET, () => {
+  ipcMain.handle(IPC_CHANNELS.CONFIG_GET, (event) => {
+    getWindowForSender(event.sender)
     return configManager.loadConfig()
   })
 
-  ipcMain.handle(IPC_CHANNELS.AGENT_APPROVAL, (_event, payload: { allowed: boolean; approvalId: string }) => {
+  ipcMain.handle(IPC_CHANNELS.AGENT_APPROVAL, (event, payload: { allowed: boolean; approvalId: string }) => {
+    if (typeof payload?.approvalId !== 'string' || typeof payload.allowed !== 'boolean') return false
+    if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return false
     const pending = pendingApprovals.get(payload?.approvalId)
     if (!pending) return false
     pendingApprovals.delete(payload.approvalId)
     clearTimeout(pending.timer)
-    pending.resolve(Boolean(payload.allowed))
+    pending.resolve(payload.allowed)
     return true
   })
 
-  ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE, (_event, newConfig) => {
+  ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE, (event, newConfig) => {
+    getWindowForSender(event.sender)
     return configManager.saveConfig(newConfig)
   })
 
-  ipcMain.handle(IPC_CHANNELS.THEME_LIST, () => {
+  ipcMain.handle(IPC_CHANNELS.THEME_LIST, (event) => {
+    getWindowForSender(event.sender)
     return configManager.listThemes()
   })
 
-  ipcMain.handle(IPC_CHANNELS.THEME_GET, (_event, name: string) => {
+  ipcMain.handle(IPC_CHANNELS.THEME_GET, (event, name: string) => {
+    getWindowForSender(event.sender)
     return configManager.getTheme(name)
   })
 
-  ipcMain.handle(IPC_CHANNELS.THEME_SAVE, (_event, theme) => {
+  ipcMain.handle(IPC_CHANNELS.THEME_SAVE, (event, theme) => {
+    getWindowForSender(event.sender)
     return configManager.saveUserTheme(theme)
   })
 
-  ipcMain.handle(IPC_CHANNELS.SYSTEM_OPEN_EXTERNAL, async (_event, url: string) => {
+  ipcMain.handle(IPC_CHANNELS.SYSTEM_OPEN_EXTERNAL, async (event, url: string) => {
+    getWindowForSender(event.sender)
     if (typeof url !== 'string') return false
     try {
       const parsed = new URL(url)

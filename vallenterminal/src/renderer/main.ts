@@ -1489,8 +1489,13 @@ window.api.onAgentStatus((status) => {
     appendAgentOutput(statusTerminalId, '\x1b[33mBalas \x1b[1my\x1b[0m\x1b[33m untuk izinkan atau \x1b[1mn\x1b[0m\x1b[33m untuk tolak.\x1b[0m\r\n')
     if (isActive) updateStatus('Waiting for approval...', 'thinking')
   } else if (status.type === 'review_complete') {
-    appendAgentOutput(statusTerminalId, `\x1b[36m${status.message}\x1b[0m\r\n`)
-    if (isActive) updateStatus('Review completed', 'tool_end')
+    // Background self-review runs after the answer; a notice landing after the
+    // turn looks like an error, so keep it in the status bar unless it changed
+    // something (the payload then carries the "updated" detail).
+    if (isActive) {
+      const changed = /updated/i.test(status.message || '')
+      updateStatus(changed ? status.message : 'Self-review: no changes', changed ? 'tool_end' : 'idle')
+    }
   }
 })
 

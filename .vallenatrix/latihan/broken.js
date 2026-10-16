@@ -1,13 +1,11 @@
-// Target latihan Ronde 3: file ini sengaja masih salah.
-// Bug 1: fungsi stats() menjumlahkan string, bukan angka.
-// Bug 2: average() membagi dengan angka tetap.
+// Diperbaiki: total mulai dari 0 (angka, bukan string) dan average dibagi panjang array.
 
 function stats(numbers) {
-  let total = ''
+  let total = 0
   for (const value of numbers) {
     total = total + value
   }
-  const average = total / 5
+  const average = numbers.length === 0 ? 0 : total / numbers.length
   return { total, average }
 }
 

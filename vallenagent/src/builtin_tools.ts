@@ -2676,7 +2676,19 @@ function applyV4APatch(text: string, baseDir: string, context: ToolContext): Rec
     finalize()
     if (!edits.size) return { error: 'Patch contains no file operations' }
     const files = [...edits.values()].map(edit => ({ path: edit.path, operation: edit.operation, old_string: edit.original, new_string: edit.current }))
-    return applyPatchBatch(files, baseDir, context)
+    const result = applyPatchBatch(files, baseDir, context)
+    if (!result.success) return result
+    const diffs = [...edits.values()].map(edit => {
+      const path = relative(baseDir, edit.path) || basename(edit.path)
+      const header = `--- ${path}\n+++ ${path}`
+      if (edit.operation === 'delete') return `${header}\n-${(edit.original || '').replace(/\n$/, '').replace(/\n/g, '\n-')}`
+      if (edit.operation === 'add') return `${header}\n+${(edit.current || '').replace(/\n$/, '').replace(/\n/g, '\n+')}`
+      return `${header}\n${generateDiff(edit.original || '', edit.current || '')}`
+    })
+    const diff = diffs.join('\n')
+    const maxChars = 20_000
+    if (diff.length > maxChars) return { ...result, diff: `${diff.slice(0, maxChars)}\n... diff truncated`, diff_truncated: true }
+    return { ...result, diff }
   } catch (err: any) {
     return { error: err.message || 'V4A patch failed; no files were changed.' }
   }
@@ -2742,7 +2754,7 @@ function applyPatchBatch(files: any, baseDir: string, context: ToolContext): Rec
       if (item.originalMoved) try { unlinkSync(item.backup) } catch {}
       if (item.after !== null) recordWrittenFile(context, item.path, item.after)
     }
-    return { success: true, files: staged.map(item => ({ path: item.path, operation: item.operation, diff: item.diff })) }
+    return { success: true, files: staged.map(item => ({ path: item.path, operation: item.operation })) }
   } catch (err: any) {
     for (const item of staged) {
       try { unlinkSync(item.temp) } catch {}

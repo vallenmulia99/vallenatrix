@@ -28,5 +28,5 @@ test('background review sends concise verified update notice', async () => {
     onReviewComplete: summary => { notice = summary }
   })
   await new Promise(resolve => setImmediate(resolve))
-  assert.equal(notice, 'Skill/memory updated: skill test-driven-development')
+  assert.equal(notice, 'Self-review saved: skill test-driven-development (added pitfall)')
 })

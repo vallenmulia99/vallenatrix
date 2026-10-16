@@ -343,7 +343,7 @@ export class AIAgent {
       : loadConfig()
     this.maxIterations = options.maxIterations || this.config.max_iterations || 500
     this.sessionId = options.sessionId || `session-${Date.now()}`
-    this.backgroundReview = options.backgroundReview ?? (this.config.gateway?.background_review ?? true)
+    this.backgroundReview = options.backgroundReview ?? (this.config.gateway?.background_review ?? false)
     this.sessionManager = new SessionManager(options.sessionDir)
     this.checkpointDir = defaultCheckpointDir(options.sessionDir)
     this.verification = new VerificationLedger(this.sessionId, this.checkpointDir)

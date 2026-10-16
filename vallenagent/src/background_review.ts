@@ -74,7 +74,7 @@ export async function spawnBackgroundReview(
           const parsed = JSON.parse(trimmed)
           const updates = Array.isArray(parsed?.updated) ? parsed.updated : []
           notice = updates.length
-            ? `Skill/memory updated: ${updates.map((item: any) => `${item.kind || 'item'} ${item.name || ''}`.trim()).join(', ')}`
+            ? `Self-review saved: ${updates.map((item: any) => `${item.kind || 'item'} ${item.name || ''}${item.change ? ` (${item.change})` : ''}`.trim()).join('; ')}`.slice(0, 240)
             : 'Self-review completed with changes.'
         } catch {
           notice = trimmed.split(/\r?\n/).find(line => line.trim())?.trim().slice(0, 240) || 'Self-review completed with changes.'

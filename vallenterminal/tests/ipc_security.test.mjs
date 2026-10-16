@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+const renderer = readFileSync(new URL('../src/renderer/main.ts', import.meta.url), 'utf8')
 
 test('approval IPC accepts only boolean answers from owning window', () => {
   const handler = source.slice(source.indexOf('ipcMain.handle(IPC_CHANNELS.AGENT_APPROVAL'), source.indexOf('ipcMain.handle(IPC_CHANNELS.CONFIG_SAVE'))
@@ -33,4 +34,13 @@ test('pending approval resolves denied when its target window closes', () => {
   const handler = source.slice(at, source.indexOf('\nfunction createWindow', at))
   assert.match(handler, /target\.once\('closed'/)
   assert.match(handler, /pending\.resolve\(false\)/)
+})
+
+test('renderer tracks approval prompts per terminal and replies to owning terminal', () => {
+  assert.match(renderer, /const pendingApprovals = new Map<string, \{ approvalId: string \}\[\]>\(\)/)
+  assert.match(renderer, /pendingApprovals\.set\(statusTerminalId, queue\)/)
+  assert.match(renderer, /pendingApprovals\.get\(requestTerminalId\)/)
+  assert.match(renderer, /pendingApprovals\.delete\(requestTerminalId\)/)
+  assert.match(renderer, /approvalQueue!\.shift\(\)/)
+  assert.doesNotMatch(renderer, /pendingApproval\s*=/)
 })

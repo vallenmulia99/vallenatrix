@@ -16,3 +16,10 @@ test('walking and sleeping emoji pets receive animated poses despite global moti
   assert.match(html, /\.pet-slime \{ background:[^}]*var\(--pet-accent\)/)
   assert.match(html, /\.pet-fox, \.pet-kitsune \{ background: linear-gradient\(90deg, #fff[^}]+#d94150/)
 })
+
+test('pet animation timer pauses while renderer is hidden and resumes when visible', () => {
+  assert.match(pet, /private pageVisible = !document\.hidden/)
+  assert.match(pet, /document\.addEventListener\('visibilitychange', this\.onVisibilityChange\)/)
+  assert.match(pet, /if \(this\.loopId !== null \|\| !this\.pageVisible\) return/)
+  assert.match(pet, /if \(this\.pageVisible && this\.enabled\) this\.start\(\)\s*else this\.stop\(\)/)
+})

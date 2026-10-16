@@ -35,3 +35,17 @@ Gunakan checklist ini untuk memverifikasi fitur Vallenatrix:
 - [x] `Ctrl+=` memperbesar ukuran font.
 - [x] `Ctrl+-` memperkecil ukuran font.
 - [x] `Ctrl+0` mereset ukuran font ke 14px.
+
+## 5. Agent Chat & Approval
+- [ ] Kirim pesan agent; token streaming tampil bertahap dan jawaban akhir berada di response box.
+- [ ] Jalankan tool berisiko; agent menunggu `y`/`n`, approval timeout menolak otomatis.
+- [ ] Buka dua terminal, picu approval pada keduanya, lalu balas di tab pemilik prompt; jawaban tidak boleh menyetujui/menolak prompt terminal lain.
+- [ ] Jalankan `/stop` saat model berpikir dan saat tool berjalan; turn berhenti tanpa menutup aplikasi.
+- [ ] Jalankan `/auto safe`, `/auto off`, dan `/auto on`; status serta perilaku konfirmasi sesuai definisi command.
+
+## 6. Sessions, Planning & Runtime
+- [ ] Jalankan `/sessions`, `/resume latest`, dan `/resume` tanpa argumen; sesi terbaru pulih dengan model dan working directory yang sesuai.
+- [ ] Jalankan `/session clearall`; pembatalan mempertahankan sesi, konfirmasi menghapusnya.
+- [ ] Jalankan `/plan <task>`; plan tersimpan dan tidak ada implementasi file proyek di turn yang sama. `/plans` menampilkan hasilnya.
+- [ ] Jalankan `/health`; status gateway dibedakan dari kondisi runtime lain.
+- [ ] Jalankan self-review dengan `gateway.background_review: true`; hasil tanpa perubahan tetap senyap, perubahan nyata menunjukkan item yang disimpan.

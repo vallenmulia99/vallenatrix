@@ -126,6 +126,7 @@ export class TerminalPet {
   private bubbleTimeout: number | null = null
   private loopId: number | null = null
   private enabled: boolean = true
+  private pageVisible = !document.hidden
   private lastFrame: string = ''
   private scale: number = 1.0
   private isAgentWorking: boolean = false
@@ -154,6 +155,8 @@ export class TerminalPet {
     this.petEl.appendChild(this.spriteEl)
 
     this.parent.appendChild(this.petEl)
+
+    document.addEventListener('visibilitychange', this.onVisibilityChange)
 
     // Interaction on click
     this.petEl.addEventListener('click', () => this.meow())
@@ -359,8 +362,14 @@ export class TerminalPet {
   }
 
   private start(): void {
-    if (this.loopId !== null) return
+    if (this.loopId !== null || !this.pageVisible) return
     this.loopId = window.setInterval(() => this.tick(), 120)
+  }
+
+  private onVisibilityChange = (): void => {
+    this.pageVisible = !document.hidden
+    if (this.pageVisible && this.enabled) this.start()
+    else this.stop()
   }
 
   private stop(): void {

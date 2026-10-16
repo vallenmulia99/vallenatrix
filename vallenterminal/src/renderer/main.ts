@@ -847,7 +847,7 @@ async function saveConfigSafely(config: Parameters<typeof window.api.saveConfig>
 // Merge pending updates so independent setting changes survive debounce.
 let saveConfigTimeout: NodeJS.Timeout | null = null
 let pendingConfigUpdates: Record<string, any> = {}
-let pendingApproval: { approvalId: string } | null = null
+const pendingApprovals = new Map<string, { approvalId: string }[]>()
 function debouncedSaveConfig(updates: any, delay = 500) {
   pendingConfigUpdates = { ...pendingConfigUpdates, ...updates,
     ...(updates.background && pendingConfigUpdates.background ? { background: { ...pendingConfigUpdates.background, ...updates.background } } : {}) }
@@ -1193,7 +1193,7 @@ modelSelect.addEventListener('change', async () => {
 
 // Chat Input Handlers
 async function sendChatMessage() {
-  if (agentRequestActive && !pendingApproval) {
+  if (agentRequestActive && pendingApprovals.size === 0) {
     await window.api.chatAgent('/stop', undefined, activeTerminalId)
     return
   }
@@ -1219,21 +1219,24 @@ async function sendChatMessage() {
   chatAttachments.splice(0, chatAttachments.length)
   renderChatAttachments()
 
-  // Approval prompt: answer y/n while agent waits on a gated tool.
-  if (pendingApproval) {
+  // Approval replies target this terminal's pending prompt.
+  const approvalQueue = pendingApprovals.get(requestTerminalId)
+  const approval = approvalQueue?.[0]
+  if (approval) {
     const answer = message.trim().toLowerCase()
-    if (['y', 'ya', 'yes'].includes(answer)) {
-      appendAgentOutput(requestTerminalId, '\x1b[32m> y (disetujui)\x1b[0m\r\n')
-      void window.api.answerApproval(true, pendingApproval.approvalId)
-    } else if (['n', 'no', 'tidak', 'batal'].includes(answer)) {
-      appendAgentOutput(requestTerminalId, '\x1b[31m> n (ditolak)\x1b[0m\r\n')
-      void window.api.answerApproval(false, pendingApproval.approvalId)
-    } else {
+    const allowed = ['y', 'ya', 'yes'].includes(answer)
+    const denied = ['n', 'no', 'tidak', 'batal'].includes(answer)
+    if (!allowed && !denied) {
       appendAgentOutput(requestTerminalId, '\x1b[33mBalas y untuk izinkan atau n untuk tolak.\x1b[0m\r\n')
       chatInput.focus()
       return
     }
-    pendingApproval = null
+    appendAgentOutput(requestTerminalId, allowed
+      ? '\x1b[32m> y (disetujui)\x1b[0m\r\n'
+      : '\x1b[31m> n (ditolak)\x1b[0m\r\n')
+    approvalQueue!.shift()
+    if (!approvalQueue!.length) pendingApprovals.delete(requestTerminalId)
+    void window.api.answerApproval(allowed, approval.approvalId)
     chatInput.focus()
     return
   }
@@ -1484,7 +1487,9 @@ window.api.onAgentStatus((status) => {
       agentTerminalNotice.classList.remove('hidden')
     }
   } else if (status.type === 'approval') {
-    pendingApproval = { approvalId: status.approvalId || '' }
+    const queue = pendingApprovals.get(statusTerminalId) || []
+    queue.push({ approvalId: status.approvalId || '' })
+    pendingApprovals.set(statusTerminalId, queue)
     appendAgentOutput(statusTerminalId, `\x1b[33m${status.message}\x1b[0m\r\n`)
     appendAgentOutput(statusTerminalId, '\x1b[33mBalas \x1b[1my\x1b[0m\x1b[33m untuk izinkan atau \x1b[1mn\x1b[0m\x1b[33m untuk tolak.\x1b[0m\r\n')
     if (isActive) updateStatus('Waiting for approval...', 'thinking')

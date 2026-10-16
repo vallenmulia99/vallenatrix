@@ -8,6 +8,7 @@ import type { AppConfig, Theme } from '../shared/types'
 import { buildPromptForAgent, normalizePrompt, shouldOffloadPaste } from '../shared/prompt-input'
 import type { SavedPasteReference } from '../shared/prompt-input'
 import { TerminalPet } from './pet'
+import { renderMarkdownForTerminal } from './format'
 
 declare global {
   interface Window {
@@ -1267,9 +1268,9 @@ async function sendChatMessage() {
           const g = parseInt(agentColor.slice(3, 5), 16)
           const b = parseInt(agentColor.slice(5, 7), 16)
           const colorCode = `\x1b[38;2;${r};${g};${b}m`
-          
-          for (const line of res.response.split('\n')) {
-            appendAgentOutput(requestTerminalId, `${colorCode}${line}\x1b[0m\r\n`)
+
+          for (const line of renderMarkdownForTerminal(res.response, colorCode, '\x1b[1;36m', '\x1b[36m')) {
+            appendAgentOutput(requestTerminalId, `${line}\r\n`)
           }
           appendAgentOutput(requestTerminalId, `${botBar}\r\n`)
           updateStatusBarMetrics(res.telemetry)
@@ -1344,9 +1345,9 @@ async function sendChatMessage() {
       const g = parseInt(agentColor.slice(3, 5), 16)
       const b = parseInt(agentColor.slice(5, 7), 16)
       const colorCode = `\x1b[38;2;${r};${g};${b}m`
-      
-      for (const line of res.response.split('\n')) {
-        appendAgentOutput(requestTerminalId, `${colorCode}${line}\x1b[0m\r\n`)
+
+      for (const line of renderMarkdownForTerminal(res.response, colorCode, '\x1b[1;36m', '\x1b[36m')) {
+        appendAgentOutput(requestTerminalId, `${line}\r\n`)
       }
       appendAgentOutput(requestTerminalId, `${botBar}\r\n`)
       const interrupted = res.response.includes('[Interrupted by user]')

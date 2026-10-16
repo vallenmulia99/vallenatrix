@@ -1135,6 +1135,8 @@ export class AIAgent {
     const skillsBlock = this.skillLoader.getFormattedIndex()
     const memoryBlock = this.memoryStore.formatForSystemPrompt()
     const todoBlock = this.todoStore.formatForInjection()
+    const plainTextRule = ['# Output Format (terminal, plain text)',
+      'Balasan tampil di terminal yang mencetak karakter mentah, jadi jangan pakai formatting markdown: tanpa bold, tanpa backtick, tanpa heading, tanpa tabel pipe. Tulis teks polos dengan bullet "- " atau numbering "1." bila perlu daftar. Baris kode/command ditulis apa adanya di barisnya sendiri.'].join('\n')
     const cwd = this.config.terminal?.cwd || process.cwd()
     const home = homedir()
     const hostOS = platform()
@@ -1160,6 +1162,8 @@ For codebase work, inspect with search_files and read_file; make focused edits w
 
 # Indonesian Casual Language Understanding
 Pahami bahasa santai/casual Indonesia (bang, lu, gw, gas, gasin, lanjut, yoi, sip, otw, terapkan, beresin). Jangan bertele-tele atau meminta konfirmasi berulang. Jika user memberi perintah atau mengatakan "gas"/"lanjut", langsung eksekusi tool yang tepat (patch, write_file, terminal, dsb) secara tuntas.
+
+${plainTextRule}
 
 # Runtime Environment
 - Current Date: ${dateStr} ${timeStr}

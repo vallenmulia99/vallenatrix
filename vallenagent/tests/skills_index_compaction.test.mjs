@@ -29,8 +29,9 @@ test('skills index: caps descriptions and compacts the uncategorised bucket', t 
   assert.match(index, /- short-one: Short and useful\./)
   assert.doesNotMatch(index, new RegExp(`A{${200}}`), 'long description must be truncated')
   assert.match(index, /long-one: A+…/)
-  assert.match(index, /general \(2\): flat-one, flat-two/)
-  assert.doesNotMatch(index, /flat-one: Flat skill one/, 'general bucket drops per-skill descriptions')
+  assert.match(index, /general \(2\):/)
+  assert.match(index, /flat-one: Flat skill one\./, 'general skill descriptions help model choose skill without keyword triggers')
+  assert.match(index, /flat-two: Flat skill two\./)
   assert.doesNotMatch(index, /Body text that must not appear/, 'bodies stay out of the index')
 })
 
@@ -54,6 +55,6 @@ test('skills index: stays small for many flat skills', t => {
   const loader = new SkillLoader([root])
   loader.load()
   const index = loader.getFormattedIndex()
-  // 40 names + one header line beats 40 × 120 chars of descriptions by an order of magnitude.
-  assert.ok(index.length < 2000, `index too big: ${index.length}`)
+  // 40 short descriptions keep uncategorised skills discoverable without adding full bodies.
+  assert.ok(index.length < 4000, `index too big: ${index.length}`)
 })

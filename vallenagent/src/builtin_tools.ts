@@ -1232,7 +1232,7 @@ export function registerBuiltinTools(
           if (markerIdx !== -1) {
             const detectedCwd = output.slice(markerIdx + cwdMarker.length).trim()
             output = output.slice(0, markerIdx)
-            if (!args.workdir && detectedCwd && existsSync(detectedCwd)) {
+            if (detectedCwd && resolve(detectedCwd) !== resolve(workdir) && existsSync(detectedCwd) && statSync(detectedCwd).isDirectory()) {
               context.workingDir = detectedCwd
             }
           }

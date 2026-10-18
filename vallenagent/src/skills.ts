@@ -284,9 +284,13 @@ export class SkillLoader {
     const sortedCats = Array.from(byCategory.keys()).sort()
     for (const cat of sortedCats) {
       const catSkills = byCategory.get(cat)!.sort((a, b) => a.name.localeCompare(b.name))
-      // Kategori bawaan tanpa kurasi: cuma nama, biar tidak ada 60 deskripsi panjang.
+      // Skills in the uncategorised bucket need short descriptions so the model can choose by domain.
       if (cat === 'general') {
-        lines.push(`  general (${catSkills.length}): ${catSkills.map(s => s.name).join(', ')}`)
+        lines.push(`  general (${catSkills.length}):`)
+        for (const s of catSkills) {
+          const desc = truncate(s.metadata.description.slice(0, 36))
+          lines.push(desc ? `    - ${s.name}: ${desc}` : `    - ${s.name}`)
+        }
         continue
       }
       lines.push(`  ${cat}:`)
@@ -298,7 +302,7 @@ export class SkillLoader {
 
     return [
       "## Skills",
-      "Before replying, scan the skills below. If a skill matches or is even partially relevant to your task, you MUST load it with skill_view(name) and follow its instructions. Err on the side of loading — it is always better to have context you don't need than to miss critical steps, pitfalls, or established workflows. Skills contain specialized knowledge — API endpoints, tool-specific commands, and proven workflows that outperform general-purpose approaches. Load the skill even if you think you could handle the task with basic tools like terminal.",
+      "Before replying, scan the skills below and load the strongest matching skill with skill_view(name) when its domain clearly applies. Prefer one relevant skill over several weak matches; do not load a skill based only on a generic word or shared project name. Skills contain specialized workflows that can improve task quality. If no skill clearly applies, continue without one.",
       "",
       "<available_skills>",
       lines.join('\n'),

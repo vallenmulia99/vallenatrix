@@ -1309,13 +1309,17 @@ async function sendChatMessage() {
   }
 
   const selectedModel = modelSelect.value
+  const imageFiles = filesToSend.filter(file => file.isImage)
   const attachmentPrompt = filesToSend.length
     ? `\n\nFile yang dilampirkan user (baca file teks dengan read_file; analisis foto/gambar dengan vision_analyze):\n${filesToSend.map(file => `- ${file.isImage ? 'Gambar' : 'File'} ${JSON.stringify(file.name)}: ${JSON.stringify(file.path)}`).join('\n')}`
     : ''
-  const prompt = `${buildPromptForAgent(hasMessage ? message : (filesToSend.some(file => file.isImage) ? 'Tolong analisis foto yang aku lampirkan.' : 'Tolong periksa file yang aku lampirkan.'), pastesToSend)}${attachmentPrompt}`
+  const imageAnalysisInstruction = imageFiles.map(file =>
+    `Call vision_analyze now with image_url=${JSON.stringify(file.path)} and question=${JSON.stringify(message || 'Jelaskan isi gambar ini dengan rinci dan jawab permintaan user.')}. Do not stop at the attachment notice.`
+  ).join('\n')
+  const prompt = `${buildPromptForAgent(hasMessage ? message : (imageFiles.length ? 'Tolong analisis foto yang aku lampirkan.' : 'Tolong periksa file yang aku lampirkan.'), pastesToSend)}${attachmentPrompt}${imageAnalysisInstruction ? `\n\nWajib analisis lampiran gambar sekarang:\n${imageAnalysisInstruction}` : ''}`
   
   // Display user message in terminal
-  const displayedMessage = message || 'Tolong periksa lampiran ini.'
+  const displayedMessage = message || (imageFiles.length ? 'Tolong analisis foto yang aku lampirkan.' : 'Tolong periksa file yang aku lampirkan.')
   const attachmentSummary = filesToSend.length ? `\n  📎 ${filesToSend.map(file => file.name).join(', ')}` : ''
   appendAgentOutput(requestTerminalId, `\r\n\x1b[32m[You]\x1b[0m \x1b[37m${displayedMessage}${attachmentSummary}\x1b[0m\r\n`)
   updateStatus('Agent thinking...', 'thinking')

@@ -365,7 +365,9 @@ export class AIAgent {
     }
 
     // Initialize skill loader
-    const skillPaths = this.config.skills?.paths || []
+    const defaultSkillPath = join(homedir(), '.vallenatrix', 'skills')
+    const skillPaths = Array.from(new Set([...(this.config.skills?.paths || []), defaultSkillPath]))
+    this.config.skills = { ...(this.config.skills || {}), paths: skillPaths }
     const skillConfig = {
       disabled: this.config.skills?.disabled || [],
       enabled: this.config.skills?.enabled || []
@@ -541,6 +543,12 @@ export class AIAgent {
     }
 
     const matchedSkills = this.skillLoader.getRelevantSkills(effectiveUserMessage)
+      .sort((a, b) => {
+        const message = effectiveUserMessage.toLowerCase()
+        const aExplicit = (a.metadata.triggers || []).some((trigger: string) => message.includes(trigger.toLowerCase()))
+        const bExplicit = (b.metadata.triggers || []).some((trigger: string) => message.includes(trigger.toLowerCase()))
+        return Number(bExplicit) - Number(aExplicit)
+      })
     const matchedSkill = matchedSkills[0]
     if (matchedSkill) this.activeSkill = matchedSkill
     const skillToPreload = matchedSkill || this.activeSkill
@@ -1159,6 +1167,9 @@ You MUST use your tools to take action — do not describe what you would do or 
 
 # Choose the Right Tool
 For codebase work, inspect with search_files and read_file; make focused edits with patch. Before write_file overwrites an existing file, read its complete current contents with read_file; new files may be written directly. Prefer patch for targeted edits. Do NOT use terminal for file browsing, reading, searching, editing, or writing when a dedicated tool exists. Use terminal for commands that need execution, such as tests, builds, git operations, package scripts, and runtime checks. Use terminal background=true for long-running servers, notify=true for exit callbacks, then process_manage to poll, wait, or kill; process IDs belong to the current session. Deferred capabilities are not in the default schema: discover them with tool_search, inspect schema with tool_describe, then invoke via tool_call. For TypeScript edits, run a successful typecheck after the last edit; otherwise report task incomplete. Use patch_batch for related targeted edits and apply_patch for V4A Update/Add/Delete File operations. Before each command, know what result it is meant to verify; avoid repeated exploratory shell commands. Keep tool calls focused and report changed files plus verification in the final response.
+
+# Efficient Discovery and Tool Calls
+Think through the task and choose relevant skills before acting. Load only the strongest matching skill(s); do not load a generic or unrelated skill just because its name shares a broad word. For discovery, collect independent questions first and issue their searches/reads together in one assistant response instead of repeating one search at a time. Batch independent read-only calls in one model response; sequence calls only when a later step truly depends on earlier output. Do not repeat searches/commands that already answered the question; broaden or refine once only when results are incomplete. Inspect available evidence before asking the user to clarify; ask only if ambiguity changes the action and cannot be resolved from files or context. For shell-only diagnostics, combine independent read-only checks into one command. Keep writes, dependent steps, and risky commands ordered and separately verified.
 
 # Indonesian Casual Language Understanding
 Pahami bahasa santai/casual Indonesia (bang, lu, gw, gas, gasin, lanjut, yoi, sip, otw, terapkan, beresin). Jangan bertele-tele atau meminta konfirmasi berulang. Jika user memberi perintah atau mengatakan "gas"/"lanjut", langsung eksekusi tool yang tepat (patch, write_file, terminal, dsb) secara tuntas.

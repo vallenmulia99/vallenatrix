@@ -25,6 +25,13 @@ test('agent loads user-installed skills directory even when config has no skill 
     if (previousHome === undefined) delete process.env.VALLENATRIX_HOME
     else process.env.VALLENATRIX_HOME = previousHome
   })
-  const agent = new AIAgent({ isSubagent: true })
-  assert.ok(agent.skillLoader.get('agent-reach'), 'global installed Agent Reach skill is visible')
+  const bundledRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.vallenatrix', 'skills')
+  const agent = new AIAgent({
+    isSubagent: true,
+    config: {
+      providers: { active: 'test', test: { base_url: 'http://127.0.0.1:1/v1', api_key: '', model: 'test', enabled: true } },
+      skills: { paths: [join(homedir(), '.vallenatrix', 'skills'), bundledRoot] }
+    }
+  })
+  assert.ok(agent.skillLoader.get('agent-reach'), 'bundled Agent Reach skill is visible')
 })

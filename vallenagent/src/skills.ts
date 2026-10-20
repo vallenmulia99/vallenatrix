@@ -48,8 +48,11 @@ function scanDirectory(dir: string, skills: Map<string, Skill>, rootDir: string 
         try {
           const skillData = loadSkillFile(fullPath, rootDir)
           if (skillData) {
-            if (skills.has(skillData.name)) {
-              duplicates.push(skillData.name)
+            const existing = skills.get(skillData.name)
+            if (existing) {
+              if (readFileSync(existing.path, 'utf-8') !== readFileSync(fullPath, 'utf-8')) {
+                duplicates.push(skillData.name)
+              }
               continue
             }
             skills.set(skillData.name, skillData)

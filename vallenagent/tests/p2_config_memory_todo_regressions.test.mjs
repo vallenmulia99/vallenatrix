@@ -1,19 +1,41 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { AIAgent } from '../dist/agent.js'
 import { loadConfig } from '../dist/config.js'
 import { MemoryStore } from '../dist/memory.js'
 import { TodoStore } from '../dist/todo.js'
 import { registerBuiltinTools } from '../dist/builtin_tools.js'
 import { registry } from '../dist/tools.js'
 
-test('default skill path follows VALLENATRIX_HOME', t => {
+test('agent loads configured VALLENATRIX_HOME skills', t => {
   const home = mkdtempSync(join(tmpdir(), 'p2-config-'))
-  t.after(() => { delete process.env.VALLENATRIX_HOME; rmSync(home, { recursive: true, force: true }) })
+  const previousHome = process.env.VALLENATRIX_HOME
+  const previousInteractive = process.env.VALLENATRIX_INTERACTIVE
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.VALLENATRIX_HOME
+    else process.env.VALLENATRIX_HOME = previousHome
+    if (previousInteractive === undefined) delete process.env.VALLENATRIX_INTERACTIVE
+    else process.env.VALLENATRIX_INTERACTIVE = previousInteractive
+    rmSync(home, { recursive: true, force: true })
+  })
   process.env.VALLENATRIX_HOME = home
-  assert.equal(loadConfig().skills.paths[0], join(home, 'skills'))
+  process.env.VALLENATRIX_INTERACTIVE = '0'
+  const skillDir = join(home, 'skills', 'custom')
+  mkdirSync(skillDir, { recursive: true })
+  writeFileSync(join(skillDir, 'SKILL.md'), ['---', 'name: custom-home-skill', 'description: test', '---', ''].join('\n'))
+  const config = {
+    providers: { active: 'test', test: { base_url: 'http://127.0.0.1:1/v1', api_key: '', model: 'test', enabled: true } },
+    skills: { paths: [join(home, 'skills')] },
+    gateway: { llm_compaction: false },
+    terminal: { cwd: home }
+  }
+  const agent = new AIAgent({ config, lightweight: true })
+  agent.skillLoader.load()
+  assert.equal(agent.skillLoader.get('custom-home-skill')?.name, 'custom-home-skill')
+  assert.equal(agent.skillLoader.list().length, 1)
 })
 
 test('defaults use current cwd when loaded, not module-load cwd', t => {

@@ -17,7 +17,7 @@ import { markCachePrefix, supportsPromptCache, stripCacheMarkers } from './promp
 import { buildCheckpoint, buildResumePrompt, defaultCheckpointDir, isCheckpointRelevant, loadCheckpoint, progressFromHistory, saveCheckpoint } from './turn_recovery'
 import { VerificationLedger } from './verification'
 import { SessionManager } from './session'
-import { loadConfig, getActiveProvider, setProviderToken, saveConfig } from './config'
+import { loadConfig, getActiveProvider, getVallenatrixHome, setProviderToken, saveConfig } from './config'
 import { registerBuiltinTools } from './builtin_tools'
 import { formatToolStart, formatToolEnd } from './display'
 import { ReviewRunGate, shouldRunBackgroundReview, spawnBackgroundReview } from './background_review'
@@ -365,8 +365,8 @@ export class AIAgent {
     }
 
     // Initialize skill loader
-    const defaultSkillPath = join(homedir(), '.vallenatrix', 'skills')
-    const skillPaths = Array.from(new Set([...(this.config.skills?.paths || []), defaultSkillPath]))
+    const userSkillsPath = join(getVallenatrixHome(), 'skills')
+    const skillPaths = Array.from(new Set([...(this.config.skills?.paths || []), userSkillsPath]))
     this.config.skills = { ...(this.config.skills || {}), paths: skillPaths }
     const skillConfig = {
       disabled: this.config.skills?.disabled || [],
